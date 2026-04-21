@@ -1,0 +1,100 @@
+# Docker Compose reads ${...} values from the shell environment or a local .env file.
+services:
+  # ---------------------------------------------------------------------------
+  # Bundled PostgreSQL
+  # ---------------------------------------------------------------------------
+  # Default Sprinto profile:
+  # - Sprinto app and PostgreSQL run together in one Docker deployment
+  # - DATABASE_URL points to this bundled database unless .env overrides it
+  # - if you switch to an external PostgreSQL server, this service is optional
+  postgres:
+    image: postgres:16-alpine
+    container_name: sprinto-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: sprinto
+      POSTGRES_USER: sprinto
+      POSTGRES_PASSWORD: sprinto
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sprinto -d sprinto"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    ports:
+      - "5432:5432"
+
+  # ---------------------------------------------------------------------------
+  # Sprinto Application
+  # ---------------------------------------------------------------------------
+  app:
+    image: ${SPRINTO_APP_IMAGE:-sprinto-local:dev}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sprinto-app
+    # Keep the app stopped on configuration/bootstrap failures so the logs stay
+    # readable and administrators can fix the underlying issue without a restart loop.
+    restart: "no"
+    environment:
+      # -----------------------------------------------------------------------
+      # Basic runtime
+      # -----------------------------------------------------------------------
+      PORT: 3000
+      SESSION_COOKIE_NAME: sprinto_session
+
+      # -----------------------------------------------------------------------
+      # Database connection
+      # -----------------------------------------------------------------------
+      # Default DATABASE_URL can point to the bundled postgres service above.
+      # For external PostgreSQL, set DATABASE_URL in .env to the dedicated
+      # Sprinto database prepared by the DBA. Sprinto must not share the same
+      # database with another application.
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL to the Sprinto PostgreSQL database}
+
+      # -----------------------------------------------------------------------
+      # Database TLS for enterprise external PostgreSQL
+      # -----------------------------------------------------------------------
+      # Keep disabled for the bundled local postgres service.
+      # Enable and configure these only when the external PostgreSQL deployment
+      # requires TLS, private CA trust, or mutual TLS.
+      SPRINTO_DB_SSL_ENABLED: ${SPRINTO_DB_SSL_ENABLED:-false}
+      SPRINTO_DB_SSL_REJECT_UNAUTHORIZED: ${SPRINTO_DB_SSL_REJECT_UNAUTHORIZED:-true}
+      SPRINTO_DB_SSL_CA_FILE: ${SPRINTO_DB_SSL_CA_FILE:-}
+      SPRINTO_DB_SSL_CERT_FILE: ${SPRINTO_DB_SSL_CERT_FILE:-}
+      SPRINTO_DB_SSL_KEY_FILE: ${SPRINTO_DB_SSL_KEY_FILE:-}
+
+      # -----------------------------------------------------------------------
+      # Initial content bootstrap
+      # -----------------------------------------------------------------------
+      # Default Sprinto profile keeps demo data enabled.
+      SPRINTO_SEED_DEMO_DATA: ${SPRINTO_SEED_DEMO_DATA:?Set SPRINTO_SEED_DEMO_DATA to true or false}
+
+      # -----------------------------------------------------------------------
+      # Break-glass / recovery admin
+      # -----------------------------------------------------------------------
+      # Default Sprinto profile also keeps the break-glass account enabled.
+      # Fill the username and password in .env before the first startup.
+      SPRINTO_RECOVERY_ADMIN_ENABLED: ${SPRINTO_RECOVERY_ADMIN_ENABLED:?Set SPRINTO_RECOVERY_ADMIN_ENABLED to true or false}
+      SPRINTO_RECOVERY_ADMIN_USERNAME: ${SPRINTO_RECOVERY_ADMIN_USERNAME:-}
+      SPRINTO_RECOVERY_ADMIN_PASSWORD: ${SPRINTO_RECOVERY_ADMIN_PASSWORD:-}
+      SPRINTO_RECOVERY_ADMIN_DISPLAY_NAME: ${SPRINTO_RECOVERY_ADMIN_DISPLAY_NAME:-System Recovery Admin}
+
+    # Optional mount for external PostgreSQL TLS:
+    # mount CA/cert/key files here and point SPRINTO_DB_SSL_*_FILE to the
+    # mounted paths inside the container.
+    # volumes:
+    #   - /opt/sprinto/db-certs:/run/sprinto-db-certs:ro
+
+    # In the default all-in-one profile Sprinto waits for the bundled postgres
+    # service above. If you move to external PostgreSQL, this dependency may be
+    # removed manually in your deployment-specific compose variant.
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+
+volumes:
+  postgres_data:

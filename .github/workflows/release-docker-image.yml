@@ -1,0 +1,76 @@
+name: Release
+run-name: Release ${{ github.ref_name }}
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build-docker-image:
+    if: github.repository == 'AlienPixl/Sprinto'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve release metadata
+        run: |
+          CHANGELOG_FILE="changelog/${GITHUB_REF_NAME}.md"
+          RELEASE_COMPOSE_FILE="./docker-image/docker-compose-${GITHUB_REF_NAME}.yml"
+          if [ ! -f "$CHANGELOG_FILE" ]; then
+            echo "Missing changelog file: $CHANGELOG_FILE" >&2
+            exit 1
+          fi
+          echo "CHANGELOG_FILE=$CHANGELOG_FILE" >> "$GITHUB_ENV"
+          echo "RELEASE_COMPOSE_FILE=$RELEASE_COMPOSE_FILE" >> "$GITHUB_ENV"
+          echo "RELEASE_NAME=Sprinto ${GITHUB_REF_NAME}" >> "$GITHUB_ENV"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build linux/amd64 Docker image tar
+        run: |
+          mkdir -p docker-image
+          docker buildx build \
+            --platform linux/amd64 \
+            --tag sprinto:${GITHUB_REF_NAME} \
+            --output type=docker,dest=./docker-image/sprinto-${GITHUB_REF_NAME}-linux-amd64.tar \
+            .
+
+      - name: Compress Docker image tar
+        run: gzip -f ./docker-image/sprinto-${GITHUB_REF_NAME}-linux-amd64.tar
+
+      - name: Prepare release docker compose file
+        run: |
+          awk -v image="sprinto:${GITHUB_REF_NAME}" '
+            /^    build:/ { skip = 1; next }
+            skip && /^    [^ ]/ { skip = 0 }
+            skip { next }
+            /^    image: \$\{SPRINTO_APP_IMAGE:-sprinto-local:dev\}$/ {
+              print "    image: " image
+              next
+            }
+            { print }
+          ' docker-compose.yml > "${RELEASE_COMPOSE_FILE}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sprinto-docker-image-${{ github.ref_name }}-linux-amd64
+          path: |
+            ./docker-image/sprinto-${{ github.ref_name }}-linux-amd64.tar.gz
+            ${{ env.RELEASE_COMPOSE_FILE }}
+          if-no-files-found: error
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ env.RELEASE_NAME }}
+          body_path: ${{ env.CHANGELOG_FILE }}
+          files: |
+            ./docker-image/sprinto-${{ github.ref_name }}-linux-amd64.tar.gz
+            ${{ env.RELEASE_COMPOSE_FILE }}
+          fail_on_unmatched_files: true
