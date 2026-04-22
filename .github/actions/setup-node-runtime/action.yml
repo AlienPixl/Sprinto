@@ -1,0 +1,33 @@
+name: Setup Node Runtime
+description: Install a pinned Node.js runtime without external marketplace actions.
+
+inputs:
+  node-version:
+    description: Exact Node.js version to install.
+    required: false
+    default: "22.12.0"
+
+runs:
+  using: composite
+  steps:
+    - name: Install Node.js
+      shell: bash
+      env:
+        NODE_VERSION: ${{ inputs.node-version }}
+      run: |
+        set -euo pipefail
+
+        ARCHIVE="node-v${NODE_VERSION}-linux-x64.tar.xz"
+        DOWNLOAD_PATH="${RUNNER_TEMP}/${ARCHIVE}"
+        INSTALL_DIR="${RUNNER_TEMP}/node-v${NODE_VERSION}"
+
+        curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/${ARCHIVE}" -o "${DOWNLOAD_PATH}"
+        rm -rf "${INSTALL_DIR}"
+        mkdir -p "${INSTALL_DIR}"
+        tar -xJf "${DOWNLOAD_PATH}" -C "${INSTALL_DIR}" --strip-components=1
+
+        echo "${INSTALL_DIR}/bin" >> "${GITHUB_PATH}"
+        export PATH="${INSTALL_DIR}/bin:${PATH}"
+
+        node --version
+        npm --version

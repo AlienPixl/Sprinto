@@ -14,7 +14,23 @@ jobs:
       contents: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        env:
+          CHECKOUT_REF: ${{ github.sha }}
+          REPO_TOKEN: ${{ github.token }}
+          REPOSITORY_NAME: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          git config --global --add safe.directory "${GITHUB_WORKSPACE}"
+
+          if [ -d .git ]; then
+            rm -rf .git
+          fi
+
+          git init .
+          git remote add origin "https://x-access-token:${REPO_TOKEN}@github.com/${REPOSITORY_NAME}.git"
+          git fetch --force --no-tags --depth=1 origin "${CHECKOUT_REF}"
+          git checkout --force --detach FETCH_HEAD
 
       - name: Resolve release metadata
         run: |
@@ -28,8 +44,12 @@ jobs:
           echo "RELEASE_COMPOSE_FILE=$RELEASE_COMPOSE_FILE" >> "$GITHUB_ENV"
           echo "RELEASE_NAME=Sprinto ${GITHUB_REF_NAME}" >> "$GITHUB_ENV"
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - name: Bootstrap Docker Buildx
+        run: |
+          docker buildx version
+          docker buildx inspect sprinto-release-builder >/dev/null 2>&1 || docker buildx create --name sprinto-release-builder --use
+          docker buildx use sprinto-release-builder
+          docker buildx inspect --bootstrap
 
       - name: Build linux/amd64 Docker image tar
         run: |
@@ -56,21 +76,20 @@ jobs:
             { print }
           ' docker-compose.yml > "${RELEASE_COMPOSE_FILE}"
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: sprinto-docker-image-${{ github.ref_name }}-linux-amd64
-          path: |
-            ./docker-image/sprinto-${{ github.ref_name }}-linux-amd64.tar.gz
-            ${{ env.RELEASE_COMPOSE_FILE }}
-          if-no-files-found: error
+      - name: Verify GitHub CLI
+        run: gh --version
 
-      - name: Create GitHub release
-        uses: softprops/action-gh-release@v2
-        with:
-          name: ${{ env.RELEASE_NAME }}
-          body_path: ${{ env.CHANGELOG_FILE }}
-          files: |
-            ./docker-image/sprinto-${{ github.ref_name }}-linux-amd64.tar.gz
-            ${{ env.RELEASE_COMPOSE_FILE }}
-          fail_on_unmatched_files: true
+      - name: Create or update GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          IMAGE_TAR="./docker-image/sprinto-${GITHUB_REF_NAME}-linux-amd64.tar.gz"
+
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release edit "${GITHUB_REF_NAME}" --title "${RELEASE_NAME}" --notes-file "${CHANGELOG_FILE}"
+            gh release upload "${GITHUB_REF_NAME}" "${IMAGE_TAR}" "${RELEASE_COMPOSE_FILE}" --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" "${IMAGE_TAR}" "${RELEASE_COMPOSE_FILE}" --title "${RELEASE_NAME}" --notes-file "${CHANGELOG_FILE}"
+          fi

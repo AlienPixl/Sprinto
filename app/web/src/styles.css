@@ -391,7 +391,7 @@ input[type="number"]::-webkit-inner-spin-button {
 .auth-card__content {
   display: grid;
   align-items: start;
-  min-height: 24rem;
+  min-height: 0;
 }
 
 .auth-card__panel {
@@ -3332,6 +3332,10 @@ label {
   margin-top: 0.55rem;
 }
 
+.settings-list > .account-settings-message {
+  margin-top: 0.55rem;
+}
+
 .button-center {
   justify-self: center;
   min-width: 180px;
@@ -3352,6 +3356,11 @@ label {
 .button-center.saved {
   background-color: #51cf66 !important;
   color: #000 !important;
+}
+
+.settings-field-required {
+  color: rgba(233, 196, 106, 0.88);
+  font-weight: 600;
 }
 
 .decks-container {

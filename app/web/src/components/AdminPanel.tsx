@@ -38,9 +38,19 @@ type RoleEditorState = {
 
 type SettingsSectionKey = "authentication" | "network" | "branding";
 type AuditFilterKey = "actor" | "action";
+type InlineMessage = { type: "success" | "error"; text: string };
 
 const SUPPORTED_LOGO_FORMATS = ".png,.svg,.webp,.jpg,.jpeg";
 const SUPPORTED_FAVICON_FORMATS = ".png,.ico,.svg";
+
+function renderFieldLabel(label: string, required = false) {
+  return (
+    <span>
+      {label}
+      {required ? <span className="settings-field-required"> (required)</span> : null}
+    </span>
+  );
+}
 
 type AdminPanelProps = {
   user: User;
@@ -601,6 +611,7 @@ export function AdminPanel({
   const [deckModalSaving, setDeckModalSaving] = useState(false);
 
   const [settingsSaved, setSettingsSaved] = useState(false);
+  const [settingsMessage, setSettingsMessage] = useState<InlineMessage | null>(null);
   const [updateCheckBusy, setUpdateCheckBusy] = useState(false);
   const [updateCheckDone, setUpdateCheckDone] = useState(false);
   const [runningTaskKey, setRunningTaskKey] = useState<string | null>(null);
@@ -821,9 +832,11 @@ export function AdminPanel({
   const isLocalAuthEnabled = Boolean(settings?.localAuthEnabled);
   const isActiveDirectoryEnabled = Boolean(settings?.activeDirectoryEnabled);
   const isEntraEnabled = Boolean(settings?.entraAuthEnabled);
+  const isDirectHttpsEnabled = Boolean(settings?.httpsEnabled);
   const isEntraMigrationEnabled = settings?.entraMigrationEnabled !== false;
   const hasPublicBaseUrl = Boolean(String(settings?.publicBaseUrl || "").trim());
   const hasEnabledAuthProvider = isLocalAuthEnabled || isActiveDirectoryEnabled || isEntraEnabled;
+  const isEntraClientSecretRequired = Boolean(isEntraEnabled && settings && !settings.entraClientSecretConfigured);
   const isSecureDirectoryConnection = settings?.adConnectionSecurity === "ldaps" || settings?.adConnectionSecurity === "starttls";
   const autoAnonymizeTask = settings?.scheduledTasks?.autoAnonymizeDeactivatedUsers || DEFAULT_AUTO_ANONYMIZE_TASK;
   const autoCloseRoomsTask = settings?.scheduledTasks?.autoCloseRooms || DEFAULT_AUTO_CLOSE_ROOMS_TASK;
@@ -1024,12 +1037,18 @@ export function AdminPanel({
     if (!settings) {
       return;
     }
+    setSettingsSaved(false);
+    setSettingsMessage(null);
     if (!hasEnabledAuthProvider) {
-      alert("At least one sign-in provider must remain enabled.");
+      setSettingsMessage({ type: "error", text: "At least one sign-in provider must remain enabled." });
       return;
     }
-    await onSaveSettings(settings);
-    setSettingsSaved(true);
+    try {
+      await onSaveSettings(settings);
+      setSettingsSaved(true);
+    } catch (error) {
+      setSettingsMessage({ type: "error", text: error instanceof Error ? error.message : "Failed to save settings." });
+    }
   }
 
   async function handleRoomSettingsSubmit(event: FormEvent<HTMLFormElement>) {
@@ -1037,6 +1056,7 @@ export function AdminPanel({
     if (!settings) {
       return;
     }
+    setSettingsSaved(false);
     await onSaveRoomSettings(settings);
     setSettingsSaved(true);
   }
@@ -1046,6 +1066,7 @@ export function AdminPanel({
     if (!settings) {
       return;
     }
+    setSettingsSaved(false);
     await onSaveUpdateSettings(settings);
     setSettingsSaved(true);
   }
@@ -1055,6 +1076,7 @@ export function AdminPanel({
     if (!settings) {
       return;
     }
+    setSettingsSaved(false);
     await onSaveIntegrationSettings({ jira: settings.integrations.jira });
     setSettingsSaved(true);
   }
@@ -1571,7 +1593,7 @@ export function AdminPanel({
                     <div className="settings-category__content">
                       <div className="settings-auth-row">
                         <label>
-                          <span>Login method</span>
+                          {renderFieldLabel("Login method")}
                           <select
                             value={settings.loginMethod}
                             onChange={(event) => setSettings({ ...settings, loginMethod: event.target.value as "username" | "email" | "both" })}
@@ -1585,7 +1607,6 @@ export function AdminPanel({
                           Applies to Local and Microsoft Active Directory sign-in. Microsoft Entra uses its own redirect flow.
                         </p>
                       </div>
-
                       <div className={`settings-subcategory ${localSettingsOpen ? "is-open" : ""}`}>
                         <button
                           className="settings-subcategory__toggle"
@@ -1706,7 +1727,7 @@ export function AdminPanel({
                               <span>Enable Microsoft Active Directory</span>
                             </div>
                             <label>
-                              <span>Server / URL</span>
+                              {renderFieldLabel("Server / URL", isActiveDirectoryEnabled)}
                               <input
                                 disabled={!isActiveDirectoryEnabled}
                                 placeholder="ldap://ad.company.local"
@@ -1716,7 +1737,7 @@ export function AdminPanel({
                               />
                             </label>
                             <label>
-                              <span>Port</span>
+                              {renderFieldLabel("Port")}
                               <input
                                 disabled={!isActiveDirectoryEnabled}
                                 min={1}
@@ -1727,7 +1748,7 @@ export function AdminPanel({
                               />
                             </label>
                             <label>
-                              <span>Connection security</span>
+                              {renderFieldLabel("Connection security")}
                               <select
                                 disabled={!isActiveDirectoryEnabled}
                                 value={settings.adConnectionSecurity}
@@ -1750,7 +1771,7 @@ export function AdminPanel({
                               </select>
                             </label>
                             <label>
-                              <span>Base DN</span>
+                              {renderFieldLabel("Base DN", isActiveDirectoryEnabled)}
                               <input
                                 disabled={!isActiveDirectoryEnabled}
                                 placeholder="DC=company,DC=local"
@@ -1760,7 +1781,7 @@ export function AdminPanel({
                               />
                             </label>
                             <label>
-                              <span>Bind username (UPN)</span>
+                              {renderFieldLabel("Bind username (UPN)", isActiveDirectoryEnabled)}
                               <input
                                 disabled={!isActiveDirectoryEnabled}
                                 placeholder="sprinto@company.local"
@@ -1770,7 +1791,7 @@ export function AdminPanel({
                               />
                             </label>
                             <label>
-                              <span>Bind password</span>
+                              {renderFieldLabel("Bind password", isActiveDirectoryEnabled)}
                               <input
                                 disabled={!isActiveDirectoryEnabled}
                                 placeholder="Service account password"
@@ -1780,7 +1801,7 @@ export function AdminPanel({
                               />
                             </label>
                             <label>
-                              <span>Login attribute</span>
+                              {renderFieldLabel("Login attribute")}
                               <input
                                 disabled={!isActiveDirectoryEnabled}
                                 placeholder="sAMAccountName"
@@ -1790,7 +1811,7 @@ export function AdminPanel({
                               />
                             </label>
                             <label>
-                              <span>Email attribute</span>
+                              {renderFieldLabel("Email attribute")}
                               <input
                                 disabled={!isActiveDirectoryEnabled}
                                 placeholder="mail"
@@ -1800,7 +1821,7 @@ export function AdminPanel({
                               />
                             </label>
                             <label>
-                              <span>Display name attribute</span>
+                              {renderFieldLabel("Display name attribute")}
                               <input
                                 disabled={!isActiveDirectoryEnabled}
                                 placeholder="displayName"
@@ -1810,7 +1831,7 @@ export function AdminPanel({
                               />
                             </label>
                             <label>
-                              <span>External ID attribute</span>
+                              {renderFieldLabel("External ID attribute")}
                               <input
                                 disabled={!isActiveDirectoryEnabled}
                                 placeholder="objectGUID"
@@ -1820,7 +1841,7 @@ export function AdminPanel({
                               />
                             </label>
                             <label>
-                              <span>Avatar attribute</span>
+                              {renderFieldLabel("Avatar attribute")}
                               <input
                                 disabled={!isActiveDirectoryEnabled}
                                 placeholder="thumbnailPhoto"
@@ -1939,7 +1960,7 @@ export function AdminPanel({
                             </div>
                             <div className="settings-auth-provider-grid">
                               <label className="settings-auth-provider-grid__client-id">
-                                <span>Client ID</span>
+                                {renderFieldLabel("Client ID", isEntraEnabled)}
                                 <input
                                   disabled={!isEntraEnabled}
                                   placeholder="Application (client) ID"
@@ -1949,7 +1970,7 @@ export function AdminPanel({
                                 />
                               </label>
                               <label className="settings-auth-provider-grid__client-secret">
-                                <span>Client secret</span>
+                                {renderFieldLabel("Client secret", isEntraClientSecretRequired)}
                                 <input
                                   disabled={!isEntraEnabled}
                                   placeholder={settings.entraClientSecretConfigured ? "Configured, enter to replace" : "Client secret"}
@@ -1959,7 +1980,7 @@ export function AdminPanel({
                                 />
                               </label>
                               <label className="settings-auth-provider-grid__tenant-id">
-                                <span>Tenant ID</span>
+                                {renderFieldLabel("Tenant ID", isEntraEnabled)}
                                 <input
                                   disabled={!isEntraEnabled}
                                   placeholder="contoso.onmicrosoft.com or tenant GUID"
@@ -1969,7 +1990,7 @@ export function AdminPanel({
                                 />
                               </label>
                               <label className="settings-auth-provider-grid__callback-url">
-                                <span>Callback URL</span>
+                                {renderFieldLabel("Callback URL")}
                                 <input
                                   disabled
                                   readOnly
@@ -2120,7 +2141,7 @@ export function AdminPanel({
                         <span>Trust reverse proxy headers</span>
                       </div>
                       <label>
-                        <span>Public base URL</span>
+                        {renderFieldLabel("Public base URL", isEntraEnabled)}
                         <input
                           placeholder="https://sprinto.company.com"
                           type="text"
@@ -2129,7 +2150,7 @@ export function AdminPanel({
                         />
                       </label>
                       <label>
-                        <span>TLS certificate path</span>
+                        {renderFieldLabel("TLS certificate path", isDirectHttpsEnabled)}
                         <input
                           disabled={!settings.httpsEnabled}
                           placeholder="/run/secrets/sprinto.crt"
@@ -2139,7 +2160,7 @@ export function AdminPanel({
                         />
                       </label>
                       <label>
-                        <span>TLS key path</span>
+                        {renderFieldLabel("TLS key path", isDirectHttpsEnabled)}
                         <input
                           disabled={!settings.httpsEnabled}
                           placeholder="/run/secrets/sprinto.key"
@@ -2253,6 +2274,11 @@ export function AdminPanel({
                   ) : null}
                 </div>
 
+                {settingsMessage ? (
+                  <div className={`account-settings-message account-settings-message--${settingsMessage.type}`}>
+                    {settingsMessage.text}
+                  </div>
+                ) : null}
                 <button className={`button-center ${settingsSaved ? "saved" : ""}`} disabled={!hasEnabledAuthProvider} type="submit">
                   {settingsSaved ? "✓ Saved" : "Save settings"}
                 </button>

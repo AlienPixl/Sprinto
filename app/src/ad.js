@@ -127,17 +127,22 @@ function buildIdentifierFilter(identifier, method, settings) {
   return `(${loginAttribute}=${escapedIdentifier})`;
 }
 
-function validateDirectorySettings(settings) {
+export function validateActiveDirectorySettings(settings, { requireAttributes = true } = {}) {
   const requiredFields = [
     ["adServerUrl", "Server / URL"],
     ["adBaseDn", "Base DN"],
     ["adBindUsername", "Bind username (UPN)"],
     ["adBindPassword", "Bind password"],
-    ["adLoginAttribute", "Login attribute"],
-    ["adEmailAttribute", "Email attribute"],
-    ["adDisplayNameAttribute", "Display name attribute"],
-    ["adExternalIdAttribute", "External ID attribute"],
   ];
+
+  if (requireAttributes) {
+    requiredFields.push(
+      ["adLoginAttribute", "Login attribute"],
+      ["adEmailAttribute", "Email attribute"],
+      ["adDisplayNameAttribute", "Display name attribute"],
+      ["adExternalIdAttribute", "External ID attribute"],
+    );
+  }
 
   const missing = requiredFields.find(([field]) => !String(settings?.[field] || "").trim());
   if (missing) {
@@ -232,7 +237,7 @@ async function createDirectoryClient(settings) {
 }
 
 export async function listActiveDirectoryUsers(settings) {
-  validateDirectorySettings(settings);
+  validateActiveDirectorySettings(settings);
   const client = await createDirectoryClient(settings);
   const avatarAttribute = getAvatarAttribute(settings);
 
@@ -280,7 +285,7 @@ export async function listActiveDirectoryUsers(settings) {
 }
 
 export async function authenticateAgainstActiveDirectory(identifier, password, method, settings) {
-  validateDirectorySettings(settings);
+  validateActiveDirectorySettings(settings);
   if (!String(password || "")) {
     return null;
   }
@@ -347,7 +352,7 @@ export async function authenticateAgainstActiveDirectory(identifier, password, m
 }
 
 export async function testActiveDirectoryConnection(identifier, method, settings) {
-  validateDirectorySettings(settings);
+  validateActiveDirectorySettings(settings);
   const trimmedIdentifier = String(identifier || "").trim();
   const avatarAttribute = getAvatarAttribute(settings);
 

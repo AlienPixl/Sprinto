@@ -6,7 +6,7 @@ import cookie from "cookie";
 import express from "express";
 import { WebSocketServer } from "ws";
 import sharp from "sharp";
-import { authenticateAgainstActiveDirectory, listActiveDirectoryUsers, testActiveDirectoryConnection } from "./ad.js";
+import { authenticateAgainstActiveDirectory, listActiveDirectoryUsers, testActiveDirectoryConnection, validateActiveDirectorySettings } from "./ad.js";
 import { readBootstrapConfig } from "./bootstrap-config.js";
 import {
   createEntraLoginRequest,
@@ -2526,6 +2526,19 @@ app.put("/api/admin/settings", requireUser, requireManageSettings, async (req, r
     }
   }
 
+  if (activeDirectoryEnabled) {
+    try {
+      validateActiveDirectorySettings({
+        adServerUrl: String(settings.adServerUrl || "").trim(),
+        adBaseDn: String(settings.adBaseDn || "").trim(),
+        adBindUsername: String(settings.adBindUsername || "").trim(),
+        adBindPassword: String(settings.adBindPassword || "").trim(),
+      }, { requireAttributes: false });
+    } catch (error) {
+      return json(res, { error: error instanceof Error ? error.message : "Active Directory is not fully configured." }, 400);
+    }
+  }
+
   const decks = await listDecksCompat();
   const defaultDeck = decks.find((deck) => deck.name === settings.defaultDeck);
   await upsertSettings({
@@ -2572,7 +2585,7 @@ app.put("/api/admin/settings", requireUser, requireManageSettings, async (req, r
   const nextSettings = sanitizeSettingsForAudit(await getSettingsCompat());
   await logAudit(req.user.id, "settings.update", "settings", {
     ...buildAuditChangeSet(previousSettings, nextSettings),
-    canceledPendingEntraMigrationUserIds,
+    canceledPendingMigrationUserIds,
   });
   json(res, await getAdminOverviewCompat(req.user));
 });

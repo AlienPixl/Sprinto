@@ -1,0 +1,52 @@
+name: Checkout Repository
+description: Fetch the current repository without relying on external marketplace actions.
+
+inputs:
+  ref:
+    description: Git ref or commit SHA to fetch and check out.
+    required: true
+  fetch-depth:
+    description: Fetch depth. Use 0 to fetch full history and tags.
+    required: false
+    default: "1"
+  fetch-tags:
+    description: Fetch tags when doing a shallow checkout.
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Fetch repository content
+      shell: bash
+      env:
+        INPUT_REF: ${{ inputs.ref }}
+        FETCH_DEPTH: ${{ inputs.fetch-depth }}
+        FETCH_TAGS: ${{ inputs.fetch-tags }}
+        REPO_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+
+        git config --global --add safe.directory "${GITHUB_WORKSPACE}"
+
+        if [ -d .git ]; then
+          rm -rf .git
+        fi
+
+        git init .
+        git remote add origin "https://x-access-token:${REPO_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+
+        if [ "${FETCH_DEPTH}" = "0" ]; then
+          git fetch --force --tags origin
+          git checkout --force --detach "${INPUT_REF}"
+          exit 0
+        fi
+
+        if [ "${FETCH_TAGS}" = "true" ]; then
+          TAG_OPTION="--tags"
+        else
+          TAG_OPTION="--no-tags"
+        fi
+
+        git fetch --force "${TAG_OPTION}" --depth="${FETCH_DEPTH}" origin "${INPUT_REF}"
+        git checkout --force --detach FETCH_HEAD

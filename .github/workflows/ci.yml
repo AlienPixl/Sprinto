@@ -1,5 +1,5 @@
 name: CI
-run-name: CI · ${{ github.event_name == 'pull_request' && format('PR #{0}', github.event.pull_request.number) || github.ref_name }}
+run-name: "CI · ${{ github.event_name == 'pull_request' && format('PR #{0}', github.event.pull_request.number) || github.ref_name }}"
 
 on:
   push:
@@ -17,14 +17,28 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        env:
+          CHECKOUT_REF: ${{ github.sha }}
+          REPO_TOKEN: ${{ github.token }}
+          REPOSITORY_NAME: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          git config --global --add safe.directory "${GITHUB_WORKSPACE}"
+
+          if [ -d .git ]; then
+            rm -rf .git
+          fi
+
+          git init .
+          git remote add origin "https://x-access-token:${REPO_TOKEN}@github.com/${REPOSITORY_NAME}.git"
+          git fetch --force --no-tags --depth=1 origin "${CHECKOUT_REF}"
+          git checkout --force --detach FETCH_HEAD
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: ./.github/actions/setup-node-runtime
         with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: app/package-lock.json
+          node-version: 22.12.0
 
       - name: Install dependencies
         run: npm ci

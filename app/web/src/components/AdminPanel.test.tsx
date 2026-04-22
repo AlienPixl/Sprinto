@@ -239,12 +239,18 @@ const overview: AdminOverview = {
   auditLogs: [],
 };
 
-function renderAdminPanel() {
+function renderAdminPanel({
+  currentOverview = overview,
+  onSaveSettings = vi.fn().mockResolvedValue(undefined),
+}: {
+  currentOverview?: AdminOverview;
+  onSaveSettings?: (settings: SettingsOverview) => Promise<void>;
+} = {}) {
   return render(
     <AdminPanel
       user={adminUser}
-      overview={overview}
-      onSaveSettings={vi.fn().mockResolvedValue(undefined)}
+      overview={currentOverview}
+      onSaveSettings={onSaveSettings}
       onSaveUpdateSettings={vi.fn().mockResolvedValue(undefined)}
       onSaveIntegrationSettings={vi.fn().mockResolvedValue(undefined)}
       onCheckForUpdates={vi.fn().mockResolvedValue(undefined)}
@@ -252,7 +258,7 @@ function renderAdminPanel() {
       onRunScheduledTask={vi.fn().mockResolvedValue("ok")}
       onTestActiveDirectory={vi.fn().mockResolvedValue({ ok: true, checks: [], user: null })}
       onTestJira={vi.fn().mockResolvedValue({ ok: true, site: "", accountId: "", displayName: "" })}
-      onRefreshOverview={vi.fn().mockResolvedValue(overview)}
+      onRefreshOverview={vi.fn().mockResolvedValue(currentOverview)}
       onUpdateUserRoles={vi.fn().mockResolvedValue(undefined)}
       onRevokeSession={vi.fn().mockResolvedValue(undefined)}
       onCreateDeck={vi.fn().mockResolvedValue(undefined)}
@@ -303,6 +309,84 @@ describe("AdminPanel", () => {
 
     expect(screen.getByDisplayValue("8").getAttribute("disabled")).not.toBeNull();
     expect(screen.getByRole("button", { name: "Save settings" }).getAttribute("disabled")).not.toBeNull();
+  });
+
+  it("shows required labels for enabled AD, Entra, and HTTPS save fields", async () => {
+    renderAdminPanel({
+      currentOverview: {
+        ...overview,
+        settings: {
+          ...overview.settings,
+          activeDirectoryEnabled: true,
+          entraAuthEnabled: true,
+          httpsEnabled: true,
+        },
+      },
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Authentication & Passwords/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Microsoft Active Directory/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Microsoft Entra/ }));
+    fireEvent.click(screen.getByRole("button", { name: "HTTPS & Proxy▸" }));
+
+    expect(screen.getByLabelText(/Server \/ URL.*required/i)).toBeTruthy();
+    expect(screen.getByLabelText(/Base DN.*required/i)).toBeTruthy();
+    expect(screen.getByLabelText(/Bind username \(UPN\).*required/i)).toBeTruthy();
+    expect(screen.getByLabelText(/Bind password.*required/i)).toBeTruthy();
+    expect(screen.getByLabelText(/Client ID.*required/i)).toBeTruthy();
+    expect(screen.getByLabelText(/Tenant ID.*required/i)).toBeTruthy();
+    expect(screen.getByLabelText(/Client secret.*required/i)).toBeTruthy();
+    expect(screen.getByLabelText(/Public base URL.*required/i)).toBeTruthy();
+    expect(screen.getByLabelText(/TLS certificate path.*required/i)).toBeTruthy();
+    expect(screen.getByLabelText(/TLS key path.*required/i)).toBeTruthy();
+  });
+
+  it("shows a saved state after successful settings save", async () => {
+    const onSaveSettings = vi.fn().mockResolvedValue(undefined);
+    renderAdminPanel({ onSaveSettings });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Authentication & Passwords/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Microsoft Entra/ }));
+    fireEvent.click(screen.getByTitle("Toggle Microsoft Entra"));
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    });
+
+    await waitFor(() => expect(onSaveSettings).toHaveBeenCalled());
+    expect(screen.getByRole("button", { name: "✓ Saved" })).toBeTruthy();
+  });
+
+  it("shows the backend save error when auth settings fail validation", async () => {
+    renderAdminPanel({
+      currentOverview: {
+        ...overview,
+        settings: {
+          ...overview.settings,
+          entraAuthEnabled: true,
+        },
+      },
+      onSaveSettings: vi.fn().mockRejectedValue(new Error("Microsoft Entra requires Public base URL.")),
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Authentication & Passwords/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Microsoft Entra/ }));
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    });
+
+    expect(await screen.findByText("Microsoft Entra requires Public base URL.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Save settings" })).toBeTruthy();
   });
 
   it("keeps the Microsoft Active Directory role mapping field visible but disabled when AD is off", async () => {
