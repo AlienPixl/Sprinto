@@ -4731,6 +4731,47 @@ html[data-theme="timero"] .admin-role-mapping-divider {
   grid-row: 2;
 }
 
+.settings-auth-provider-grid__migration {
+  grid-column: 1;
+  grid-row: 3;
+  align-self: start;
+  justify-self: stretch;
+  width: min(100%, 300px);
+  max-width: 100%;
+  min-width: 0;
+}
+
+.settings-auth-provider-grid__migration .settings-subcategory__content,
+.settings-auth-provider-grid__migration .settings-subcategory__content > label,
+.settings-auth-provider-grid__migration .settings-subcategory__content input {
+  min-width: 0;
+  max-width: none;
+}
+
+.settings-auth-provider-grid__migration .settings-subcategory__content--compact {
+  grid-template-columns: 1fr;
+}
+
+.settings-auth-provider-grid__migration-label {
+  display: block;
+  line-height: 1.2;
+}
+
+.settings-auth-provider-grid__logout {
+  grid-column: 2;
+  grid-row: 3;
+  align-self: start;
+  justify-self: start;
+  width: min(100%, 300px);
+  max-width: 100%;
+  min-width: 0;
+  margin-top: 1.05rem;
+}
+
+.settings-auth-provider-grid__logout.settings-subcategory__inline-toggle {
+  justify-content: flex-start;
+}
+
 .settings-provider-note {
   grid-column: 1 / -1;
   display: flex;
@@ -4750,6 +4791,12 @@ html[data-theme="timero"] .admin-role-mapping-divider {
 
 .settings-provider-note .settings-help {
   margin: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.settings-provider-note__line {
+  display: block;
 }
 
 .settings-grid {
@@ -5690,9 +5737,12 @@ select:disabled {
   .settings-auth-provider-grid__client-id,
   .settings-auth-provider-grid__client-secret,
   .settings-auth-provider-grid__tenant-id,
-  .settings-auth-provider-grid__callback-url {
+  .settings-auth-provider-grid__callback-url,
+  .settings-auth-provider-grid__migration,
+  .settings-auth-provider-grid__logout {
     grid-column: auto;
     grid-row: auto;
+    margin-top: 0;
   }
 
   .settings-subcategory__content label:last-child {

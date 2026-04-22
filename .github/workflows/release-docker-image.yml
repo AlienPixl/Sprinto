@@ -1,10 +1,13 @@
 name: Release
-run-name: Release ${{ github.ref_name }}
+run-name: Release ${{ inputs.release_tag }}
 
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Release tag to publish in AlienPixl/Sprinto
+        required: true
+        type: string
 
 jobs:
   build-docker-image:
@@ -12,10 +15,12 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag }}
     steps:
       - name: Checkout
         env:
-          CHECKOUT_REF: ${{ github.sha }}
+          CHECKOUT_REF: refs/tags/${{ inputs.release_tag }}
           REPO_TOKEN: ${{ github.token }}
           REPOSITORY_NAME: ${{ github.repository }}
         run: |
@@ -29,20 +34,20 @@ jobs:
 
           git init .
           git remote add origin "https://x-access-token:${REPO_TOKEN}@github.com/${REPOSITORY_NAME}.git"
-          git fetch --force --no-tags --depth=1 origin "${CHECKOUT_REF}"
-          git checkout --force --detach FETCH_HEAD
+          git fetch --force --tags origin
+          git checkout --force --detach "${CHECKOUT_REF}"
 
       - name: Resolve release metadata
         run: |
-          CHANGELOG_FILE="changelog/${GITHUB_REF_NAME}.md"
-          RELEASE_COMPOSE_FILE="./docker-image/docker-compose-${GITHUB_REF_NAME}.yml"
+          CHANGELOG_FILE="changelog/${RELEASE_TAG}.md"
+          RELEASE_COMPOSE_FILE="./docker-image/docker-compose-${RELEASE_TAG}.yml"
           if [ ! -f "$CHANGELOG_FILE" ]; then
             echo "Missing changelog file: $CHANGELOG_FILE" >&2
             exit 1
           fi
           echo "CHANGELOG_FILE=$CHANGELOG_FILE" >> "$GITHUB_ENV"
           echo "RELEASE_COMPOSE_FILE=$RELEASE_COMPOSE_FILE" >> "$GITHUB_ENV"
-          echo "RELEASE_NAME=Sprinto ${GITHUB_REF_NAME}" >> "$GITHUB_ENV"
+          echo "RELEASE_NAME=Sprinto ${RELEASE_TAG}" >> "$GITHUB_ENV"
 
       - name: Bootstrap Docker Buildx
         run: |
@@ -56,16 +61,16 @@ jobs:
           mkdir -p docker-image
           docker buildx build \
             --platform linux/amd64 \
-            --tag sprinto:${GITHUB_REF_NAME} \
-            --output type=docker,dest=./docker-image/sprinto-${GITHUB_REF_NAME}-linux-amd64.tar \
+            --tag sprinto:${RELEASE_TAG} \
+            --output type=docker,dest=./docker-image/sprinto-${RELEASE_TAG}-linux-amd64.tar \
             .
 
       - name: Compress Docker image tar
-        run: gzip -f ./docker-image/sprinto-${GITHUB_REF_NAME}-linux-amd64.tar
+        run: gzip -f ./docker-image/sprinto-${RELEASE_TAG}-linux-amd64.tar
 
       - name: Prepare release docker compose file
         run: |
-          awk -v image="sprinto:${GITHUB_REF_NAME}" '
+          awk -v image="sprinto:${RELEASE_TAG}" '
             /^    build:/ { skip = 1; next }
             skip && /^    [^ ]/ { skip = 0 }
             skip { next }
@@ -85,11 +90,11 @@ jobs:
         run: |
           set -euo pipefail
 
-          IMAGE_TAR="./docker-image/sprinto-${GITHUB_REF_NAME}-linux-amd64.tar.gz"
+          IMAGE_TAR="./docker-image/sprinto-${RELEASE_TAG}-linux-amd64.tar.gz"
 
-          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
-            gh release edit "${GITHUB_REF_NAME}" --title "${RELEASE_NAME}" --notes-file "${CHANGELOG_FILE}"
-            gh release upload "${GITHUB_REF_NAME}" "${IMAGE_TAR}" "${RELEASE_COMPOSE_FILE}" --clobber
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            gh release edit "${RELEASE_TAG}" --title "${RELEASE_NAME}" --notes-file "${CHANGELOG_FILE}"
+            gh release upload "${RELEASE_TAG}" "${IMAGE_TAR}" "${RELEASE_COMPOSE_FILE}" --clobber
           else
-            gh release create "${GITHUB_REF_NAME}" "${IMAGE_TAR}" "${RELEASE_COMPOSE_FILE}" --title "${RELEASE_NAME}" --notes-file "${CHANGELOG_FILE}"
+            gh release create "${RELEASE_TAG}" "${IMAGE_TAR}" "${RELEASE_COMPOSE_FILE}" --title "${RELEASE_NAME}" --notes-file "${CHANGELOG_FILE}"
           fi

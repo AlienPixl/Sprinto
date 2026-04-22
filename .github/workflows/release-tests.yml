@@ -1,0 +1,68 @@
+name: Release Tests
+run-name: Release ${{ inputs.release_tag }} - Tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Release tag to validate in AlienPixl/Sprinto
+        required: true
+        type: string
+
+jobs:
+  test-release-snapshot:
+    if: github.repository == 'AlienPixl/Sprinto'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag }}
+    steps:
+      - name: Checkout release tag
+        env:
+          CHECKOUT_REF: refs/tags/${{ inputs.release_tag }}
+          REPO_TOKEN: ${{ github.token }}
+          REPOSITORY_NAME: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          git config --global --add safe.directory "${GITHUB_WORKSPACE}"
+
+          if [ -d .git ]; then
+            rm -rf .git
+          fi
+
+          git init .
+          git remote add origin "https://x-access-token:${REPO_TOKEN}@github.com/${REPOSITORY_NAME}.git"
+          git fetch --force --tags origin
+          git checkout --force --detach "${CHECKOUT_REF}"
+
+      - name: Setup Node
+        uses: ./.github/actions/setup-node-runtime
+        with:
+          node-version: 22.12.0
+
+      - name: Install dependencies
+        working-directory: app
+        run: npm ci
+
+      - name: Run tests
+        working-directory: app
+        run: npm run test:run
+
+      - name: Build
+        working-directory: app
+        run: npm run build
+
+      - name: Trigger release
+        env:
+          REPO_TOKEN: ${{ github.token }}
+        run: |
+          curl -fsSL \
+            -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${REPO_TOKEN}" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/release-docker-image.yml/dispatches" \
+            -d "{\"ref\":\"${RELEASE_TAG}\",\"inputs\":{\"release_tag\":\"${RELEASE_TAG}\"}}"

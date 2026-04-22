@@ -30,6 +30,10 @@ describe("update repository resolution", () => {
   });
 
   it("uses the public Sprinto repo as the default fallback", () => {
-    expect(resolveUpdateRepository({ fallbackRepository: "AlienPixl/Sprinto" })).toBe("AlienPixl/Sprinto");
+    expect(resolveUpdateRepository({
+      updateRepository: "",
+      githubRepository: "",
+      fallbackRepository: "AlienPixl/Sprinto",
+    })).toBe("AlienPixl/Sprinto");
   });
 });

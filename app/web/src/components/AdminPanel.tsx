@@ -1998,103 +1998,99 @@ export function AdminPanel({
                                   value={settings.publicBaseUrl ? `${settings.publicBaseUrl.replace(/\/+$/, "")}/api/auth/entra/callback` : "Set Public base URL in HTTPS & Proxy first"}
                                 />
                               </label>
-                            </div>
-                            <div className="settings-toggle settings-subcategory__toggle-row">
-                              <button
-                                aria-pressed={settings.entraGlobalLogoutEnabled}
-                                className={`toggle-switch ${settings.entraGlobalLogoutEnabled ? "is-active" : ""}`}
-                                onClick={() =>
-                                  setSettings({
-                                    ...settings,
-                                    entraGlobalLogoutEnabled: !settings.entraGlobalLogoutEnabled,
-                                  })
-                                }
-                                type="button"
-                                title="Toggle Microsoft logout"
-                              >
-                                <span className="toggle-switch__knob" />
-                              </button>
-                              <span>Sign out from Microsoft session too</span>
-                            </div>
-                            <div className={`settings-subcategory ${entraMigrationSettingsOpen ? "is-open" : ""}`}>
-                              <button
-                                className="settings-subcategory__toggle"
-                                onClick={() => setEntraMigrationSettingsOpen((current) => !current)}
-                                type="button"
-                              >
-                                <span>Migration policy</span>
-                                <span className="settings-subcategory__chevron">{entraMigrationSettingsOpen ? "◂" : "▸"}</span>
-                              </button>
-                              {entraMigrationSettingsOpen ? (
-                                <div className="settings-subcategory__content settings-subcategory__content--compact">
-                                  <div className="settings-toggle settings-subcategory__toggle-row">
-                                    <button
-                                      aria-pressed={settings.entraMigrationEnabled !== false}
-                                      className={`toggle-switch ${settings.entraMigrationEnabled !== false ? "is-active" : ""}`}
-                                      onClick={() =>
-                                        setSettings({
-                                          ...settings,
-                                          entraMigrationEnabled: settings.entraMigrationEnabled === false,
-                                        })
-                                      }
-                                      type="button"
-                                      title="Toggle Entra migration"
-                                    >
-                                      <span className="toggle-switch__knob" />
-                                    </button>
-                                    <span>Enable Entra migration</span>
+                              <div className={`settings-subcategory settings-auth-provider-grid__migration ${entraMigrationSettingsOpen ? "is-open" : ""}`}>
+                                <button
+                                  className="settings-subcategory__toggle"
+                                  onClick={() => setEntraMigrationSettingsOpen((current) => !current)}
+                                  type="button"
+                                >
+                                  <span>Migration policy</span>
+                                  <span className="settings-subcategory__chevron">{entraMigrationSettingsOpen ? "◂" : "▸"}</span>
+                                </button>
+                                {entraMigrationSettingsOpen ? (
+                                  <div className="settings-subcategory__content settings-subcategory__content--compact">
+                                    <div className="settings-toggle settings-subcategory__toggle-row">
+                                      <button
+                                        aria-pressed={settings.entraMigrationEnabled !== false}
+                                        className={`toggle-switch ${settings.entraMigrationEnabled !== false ? "is-active" : ""}`}
+                                        onClick={() =>
+                                          setSettings({
+                                            ...settings,
+                                            entraMigrationEnabled: settings.entraMigrationEnabled === false,
+                                          })
+                                        }
+                                        type="button"
+                                        title="Toggle Entra migration"
+                                      >
+                                        <span className="toggle-switch__knob" />
+                                      </button>
+                                      <span>Enable Entra migration</span>
+                                    </div>
+                                    <label>
+                                      <span className="settings-auth-provider-grid__migration-label">Prompted logins before enforcement</span>
+                                      <input
+                                        disabled={settings.entraMigrationEnabled === false}
+                                        min={1}
+                                        type="number"
+                                        value={settings.entraMigrationPromptLoginCount}
+                                        onChange={(event) =>
+                                          setSettings({
+                                            ...settings,
+                                            entraMigrationPromptLoginCount: Math.max(1, Number(event.target.value || 1)),
+                                          })
+                                        }
+                                      />
+                                    </label>
+                                    <label>
+                                      <span>Default enforce-at date/time</span>
+                                      <input
+                                        disabled={settings.entraMigrationEnabled === false}
+                                        type="datetime-local"
+                                        value={settings.entraMigrationForceAtDefault ? settings.entraMigrationForceAtDefault.slice(0, 16) : ""}
+                                        onChange={(event) =>
+                                          setSettings({
+                                            ...settings,
+                                            entraMigrationForceAtDefault: event.target.value ? new Date(event.target.value).toISOString() : "",
+                                          })
+                                        }
+                                      />
+                                    </label>
                                   </div>
-                                  <label>
-                                    <span>Prompted logins before enforcement</span>
-                                    <input
-                                      disabled={settings.entraMigrationEnabled === false}
-                                      min={1}
-                                      type="number"
-                                      value={settings.entraMigrationPromptLoginCount}
-                                      onChange={(event) =>
-                                        setSettings({
-                                          ...settings,
-                                          entraMigrationPromptLoginCount: Math.max(1, Number(event.target.value || 1)),
-                                        })
-                                      }
-                                    />
-                                  </label>
-                                  <label>
-                                    <span>Default enforce-at date/time</span>
-                                    <input
-                                      disabled={settings.entraMigrationEnabled === false}
-                                      type="datetime-local"
-                                      value={settings.entraMigrationForceAtDefault ? settings.entraMigrationForceAtDefault.slice(0, 16) : ""}
-                                      onChange={(event) =>
-                                        setSettings({
-                                          ...settings,
-                                          entraMigrationForceAtDefault: event.target.value ? new Date(event.target.value).toISOString() : "",
-                                        })
-                                      }
-                                    />
-                                  </label>
-                                </div>
-                              ) : null}
+                                ) : null}
+                              </div>
+                              <div className="settings-toggle settings-subcategory__inline-toggle settings-auth-provider-grid__logout">
+                                <button
+                                  aria-pressed={settings.entraGlobalLogoutEnabled}
+                                  className={`toggle-switch ${settings.entraGlobalLogoutEnabled ? "is-active" : ""}`}
+                                  onClick={() =>
+                                    setSettings({
+                                      ...settings,
+                                      entraGlobalLogoutEnabled: !settings.entraGlobalLogoutEnabled,
+                                    })
+                                  }
+                                  type="button"
+                                  title="Toggle Microsoft logout"
+                                >
+                                  <span className="toggle-switch__knob" />
+                                </button>
+                                <span>Sign out from Microsoft session too</span>
+                              </div>
                             </div>
                             <div className={`settings-provider-note ${!hasPublicBaseUrl ? "is-warning" : ""}`}>
                               <p className="settings-help settings-help--muted">
-                                Public base URL is managed in HTTPS & Proxy and is required for Microsoft Entra. The callback URL above is derived from it.
+                                <span className="settings-provider-note__line">
+                                  Public base URL is managed in HTTPS & Proxy and is required for Microsoft Entra.
+                                </span>
+                                <span className="settings-provider-note__line">The callback URL above is derived from it.</span>
                               </p>
-                              {!hasPublicBaseUrl ? (
-                                <button
-                                  className="secondary-action"
-                                  onClick={() => openSettingsSection("network")}
-                                  type="button"
-                                >
-                                  Open HTTPS & Proxy
-                                </button>
-                              ) : null}
+                              <button
+                                className="secondary-action"
+                                onClick={() => openSettingsSection("network")}
+                                type="button"
+                              >
+                                Open HTTPS & Proxy
+                              </button>
                             </div>
-                            {!isEntraEnabled ? (
-                              <p className="settings-help settings-help--muted">
-                                Entra configuration stays visible here, but it only applies when Microsoft Entra is enabled.
-                              </p>
-                            ) : null}
                             {!hasEnabledAuthProvider ? (
                               <p className="settings-help settings-help--muted">
                                 At least one sign-in provider must remain enabled before these settings can be saved.
