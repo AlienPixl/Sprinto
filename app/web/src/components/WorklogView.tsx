@@ -317,12 +317,22 @@ export function WorklogView({ onLoadIssue: _onLoadIssue, onLoadIssues, onLoadRep
           <div className="worklog-toolbar__row worklog-toolbar__row--primary">
             <label className="worklog-toolbar__field">
               <span>From</span>
-              <input type="date" value={request.dateFrom} onChange={(event) => setRequest({ ...request, dateFrom: event.target.value })} />
+              <input
+                className="settings-time-input"
+                type="date"
+                value={request.dateFrom}
+                onChange={(event) => setRequest({ ...request, dateFrom: event.target.value })}
+              />
             </label>
 
             <label className="worklog-toolbar__field">
               <span>To</span>
-              <input type="date" value={request.dateTo} onChange={(event) => setRequest({ ...request, dateTo: event.target.value })} />
+              <input
+                className="settings-time-input"
+                type="date"
+                value={request.dateTo}
+                onChange={(event) => setRequest({ ...request, dateTo: event.target.value })}
+              />
             </label>
 
             <label className="worklog-toolbar__field">

@@ -443,6 +443,7 @@ describe("AdminPanel", () => {
     expect(screen.getByText("Prompted logins before enforcement")).toBeTruthy();
     expect(screen.getByText("Default enforce-at date/time")).toBeTruthy();
     expect(screen.getByText("Sign out from Microsoft session too")).toBeTruthy();
+    expect(screen.getByLabelText("Default enforce-at date/time").getAttribute("class")).toContain("settings-time-input");
   });
 
   it("shows prepare migration action for eligible local users when Entra is enabled", async () => {

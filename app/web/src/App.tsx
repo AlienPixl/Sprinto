@@ -128,9 +128,11 @@ export function App() {
   const [activeRoomId, setActiveRoomId] = useState<string | null>(null);
   const [snapshot, setSnapshot] = useState<RoomSnapshot | null>(null);
   const [view, setView] = useState<View>("dashboard");
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [userSettingsOpen, setUserSettingsOpen] = useState(false);
   const socketRef = useRef<WebSocket | null>(null);
+  const mobileNavRef = useRef<HTMLDivElement | null>(null);
   const userMenuRef = useRef<HTMLDivElement | null>(null);
   const routeRef = useRef<RouteState>(routeFromLocation());
   const canAccessAdmin = hasAdminAccess(user);
@@ -225,7 +227,11 @@ export function App() {
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
-      if (!userMenuRef.current?.contains(event.target as Node)) {
+      const target = event.target as Node;
+      if (!mobileNavRef.current?.contains(target)) {
+        setMobileNavOpen(false);
+      }
+      if (!userMenuRef.current?.contains(target)) {
         setUserMenuOpen(false);
       }
     }
@@ -233,6 +239,10 @@ export function App() {
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
+
+  useEffect(() => {
+    setMobileNavOpen(false);
+  }, [view, activeRoomId]);
 
   useEffect(() => {
     if (view !== "room" || !activeRoomId) {
@@ -893,15 +903,18 @@ export function App() {
       ? `${COPYRIGHT_START_YEAR} - ${currentYear}`
       : String(COPYRIGHT_START_YEAR);
 
+  async function navigateTo(nextRoute: RouteState) {
+    await applyRoute(nextRoute);
+    setMobileNavOpen(false);
+    setUserMenuOpen(false);
+  }
+
   return (
     <div className="app-shell">
       <header className="topbar">
         <button
           className="topbar__brand topbar__brand--button"
-          onClick={() => void (async () => {
-            await applyRoute({ view: "dashboard", roomId: null });
-            setUserMenuOpen(false);
-          })()}
+          onClick={() => void navigateTo({ view: "dashboard", roomId: null })}
           type="button"
         >
           {brandLogo ? (
@@ -911,31 +924,73 @@ export function App() {
           )}
         </button>
 
-        <nav className="topbar__nav">
-          <button
-            className={view === "dashboard" ? "is-active" : ""}
-            onClick={() => void (async () => {
-              await applyRoute({ view: "dashboard", roomId: null });
-            })()}
-            type="button"
-          >
-            Voting rooms
-          </button>
-          {canViewWorklog ? (
+        <nav aria-label="Primary navigation" className="topbar__nav">
+          <div className="topbar__nav-links">
             <button
-              className={view === "worklog" ? "is-active" : ""}
-              onClick={() => void applyRoute({ view: "worklog", roomId: null })}
+              className={view === "dashboard" ? "is-active" : ""}
+              onClick={() => void navigateTo({ view: "dashboard", roomId: null })}
               type="button"
             >
-              Jira Worklog
+              Voting rooms
             </button>
-          ) : null}
+            {canViewWorklog ? (
+              <button
+                className={view === "worklog" ? "is-active" : ""}
+                onClick={() => void navigateTo({ view: "worklog", roomId: null })}
+                type="button"
+              >
+                Jira Worklog
+              </button>
+            ) : null}
+          </div>
+          <div className={`topbar-mobile-nav ${mobileNavOpen ? "is-open" : ""}`} ref={mobileNavRef}>
+            <button
+              aria-expanded={mobileNavOpen}
+              aria-haspopup="menu"
+              aria-label="Open navigation menu"
+              className="icon-button topbar-mobile-nav__trigger"
+              onClick={() => {
+                setUserMenuOpen(false);
+                setMobileNavOpen((open) => !open);
+              }}
+              type="button"
+            >
+              <svg aria-hidden="true" fill="none" viewBox="0 0 24 24">
+                <path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" strokeLinecap="round" strokeWidth="1.9" />
+              </svg>
+            </button>
+            {mobileNavOpen ? (
+              <div className="topbar-mobile-nav__menu card card--compact" role="menu">
+                <button
+                  className={`user-dropdown__action topbar-mobile-nav__option ${view === "dashboard" ? "is-active" : ""}`}
+                  onClick={() => void navigateTo({ view: "dashboard", roomId: null })}
+                  role="menuitem"
+                  type="button"
+                >
+                  Voting rooms
+                </button>
+                {canViewWorklog ? (
+                  <button
+                    className={`user-dropdown__action topbar-mobile-nav__option ${view === "worklog" ? "is-active" : ""}`}
+                    onClick={() => void navigateTo({ view: "worklog", roomId: null })}
+                    role="menuitem"
+                    type="button"
+                  >
+                    Jira Worklog
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
           <div className="user-menu" ref={userMenuRef}>
             <button
               aria-expanded={userMenuOpen}
               aria-haspopup="menu"
               className="avatar-button"
-              onClick={() => setUserMenuOpen((open) => !open)}
+              onClick={() => {
+                setMobileNavOpen(false);
+                setUserMenuOpen((open) => !open);
+              }}
               type="button"
             >
               <span className="avatar-circle">
@@ -955,6 +1010,7 @@ export function App() {
                   className="user-dropdown__action"
                   onClick={() => {
                     setUserSettingsOpen(true);
+                    setMobileNavOpen(false);
                     setUserMenuOpen(false);
                   }}
                   type="button"
@@ -964,16 +1020,20 @@ export function App() {
                 {canAccessAdmin ? (
                   <button
                     className={`user-dropdown__action ${view === "admin" ? "is-active" : ""}`}
-                    onClick={() => void (async () => {
-                      await applyRoute({ view: "admin", roomId: null });
-                      setUserMenuOpen(false);
-                    })()}
+                    onClick={() => void navigateTo({ view: "admin", roomId: null })}
                     type="button"
                   >
                     Admin settings
                   </button>
                 ) : null}
-                <button className="user-dropdown__action" onClick={() => void handleLogout()} type="button">
+                <button
+                  className="user-dropdown__action"
+                  onClick={() => {
+                    setMobileNavOpen(false);
+                    void handleLogout();
+                  }}
+                  type="button"
+                >
                   Logout
                 </button>
               </div>

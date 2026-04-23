@@ -2044,6 +2044,7 @@ export function AdminPanel({
                                     <label>
                                       <span>Default enforce-at date/time</span>
                                       <input
+                                        className="settings-time-input"
                                         disabled={settings.entraMigrationEnabled === false}
                                         type="datetime-local"
                                         value={settings.entraMigrationForceAtDefault ? settings.entraMigrationForceAtDefault.slice(0, 16) : ""}

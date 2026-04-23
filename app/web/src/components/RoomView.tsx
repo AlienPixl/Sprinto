@@ -1323,7 +1323,11 @@ export function RoomView({
               {canManageRound ? (
               <div
                 className="card card--compact queue-panel"
-                style={queuePanelHeight && !isQueueOverlayOpen ? { height: `${queuePanelHeight}px`, maxHeight: `${queuePanelHeight}px` } : undefined}
+                style={
+                  queuePanelHeight && !isQueueOverlayOpen
+                    ? ({ "--queue-panel-sync-height": `${queuePanelHeight}px` } as CSSProperties)
+                    : undefined
+                }
               >
                 {!isQueueOverlayOpen ? (
                   <div className="queue-panel__default-content">

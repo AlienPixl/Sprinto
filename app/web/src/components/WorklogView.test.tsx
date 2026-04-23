@@ -3,6 +3,20 @@ import { describe, expect, it, vi } from "vitest";
 import { WorklogView } from "./WorklogView";
 
 describe("WorklogView", () => {
+  it("applies the Safari-safe date input class to the range fields", async () => {
+    render(
+      <WorklogView
+        onLoadIssue={vi.fn().mockResolvedValue({ key: "PROJ-1", title: "Implement worklog", issueType: "Task" })}
+        onLoadIssues={vi.fn().mockResolvedValue([])}
+        onLoadReport={vi.fn().mockResolvedValue({ rows: [] })}
+        onLoadUsers={vi.fn().mockResolvedValue([])}
+      />
+    );
+
+    expect(screen.getByLabelText("From").getAttribute("class")).toContain("settings-time-input");
+    expect(screen.getByLabelText("To").getAttribute("class")).toContain("settings-time-input");
+  });
+
   it("renders results returned by the loader", async () => {
     const onLoadReport = vi.fn().mockResolvedValue({
       rows: [
