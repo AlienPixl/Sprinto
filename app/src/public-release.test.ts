@@ -4,6 +4,7 @@ import {
   collectPublicReleaseFiles,
   collectPublicChangelogFiles,
   compareSemanticReleaseTags,
+  mapPublicReleaseOutputPath,
   normalizeReleaseTag,
   parsePublicReleaseManifest,
   validateReleaseNotesContent,
@@ -94,6 +95,11 @@ exclude:
       "changelog/v1.0.1.md",
       "changelog/v1.0.0.md",
     ])).toContain("- [v1.0.1](changelog/v1.0.1.md)\n- [v1.0.0](changelog/v1.0.0.md)");
+  });
+
+  it("rewrites public compose output to an example filename", () => {
+    expect(mapPublicReleaseOutputPath("docker-compose.yml")).toBe("docker-compose.example.yml");
+    expect(mapPublicReleaseOutputPath("README.md")).toBe("README.md");
   });
 });
 

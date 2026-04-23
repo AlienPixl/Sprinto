@@ -215,12 +215,15 @@ export type JiraAssignableUser = {
   emailAddress: string;
   avatarUrl: string;
   active: boolean;
+  scopeType?: "user" | "group";
+  groupId?: string;
 };
 
 export type JiraWorklogIssue = {
   key: string;
   title: string;
   issueType: string;
+  scopeType?: "issue" | "project";
 };
 
 export type JiraDeliveryRecord = {
@@ -256,20 +259,25 @@ export type JiraWorklogRow = {
   epicKey: string;
   issueKey: string;
   issueTitle: string;
+  issueUrl: string;
+  groupNames?: string[];
   accountId: string;
   author: string;
   startedAt: string;
   secondsSpent: number;
 };
 
-export type JiraWorklogGroupBy = "epic" | "issue" | "user";
+export type JiraWorklogGroupBy = "epic" | "issue" | "user" | "group";
 
 export type JiraWorklogRequest = {
   dateFrom: string;
   dateTo: string;
   issueKeys: string[];
+  projectKeys: string[];
   includeEpicChildren: boolean;
   assigneeAccountIds: string[];
+  groupIds: string[];
+  groupLabelsById?: Record<string, string>;
   viewMode: "issue-first" | "user-first" | "epic-first";
   primaryGroupBy?: JiraWorklogGroupBy;
   secondaryGroupBy?: JiraWorklogGroupBy | "";

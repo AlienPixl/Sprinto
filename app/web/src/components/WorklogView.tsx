@@ -16,6 +16,9 @@ type GroupedRow = {
   epicMeta: string;
   issue: string;
   issueMeta: string;
+  issueUrl: string;
+  group: string;
+  groupMeta: string;
   user: string;
   userMeta: string;
   secondsSpent: number;
@@ -38,8 +41,10 @@ const DEFAULT_REQUEST: JiraWorklogRequest = {
   dateFrom: new Date().toISOString().slice(0, 10),
   dateTo: new Date().toISOString().slice(0, 10),
   issueKeys: [],
+  projectKeys: [],
   includeEpicChildren: true,
   assigneeAccountIds: [],
+  groupIds: [],
   viewMode: "issue-first",
   primaryGroupBy: "issue",
   secondaryGroupBy: "",
@@ -49,8 +54,25 @@ const CHART_COLORS = ["#f4a261", "#78c6a3", "#6ea8fe", "#f28482", "#e9c46a", "#c
 const GROUP_BY_LABELS: Record<JiraWorklogGroupBy, string> = {
   epic: "Epic",
   issue: "Issue",
+  group: "Group",
   user: "User",
 };
+
+function getWorklogScopeType(issue: JiraWorklogIssue) {
+  return issue.scopeType === "project" ? "project" : "issue";
+}
+
+function getWorklogScopeLookupKey(key: string, scopeType: JiraWorklogIssue["scopeType"] = "issue") {
+  return `${scopeType === "project" ? "project" : "issue"}:${String(key || "").trim()}`;
+}
+
+function getWorklogPrincipalScopeType(principal: JiraAssignableUser) {
+  return principal.scopeType === "group" ? "group" : "user";
+}
+
+function getWorklogPrincipalLookupKey(value: string, scopeType: JiraAssignableUser["scopeType"] = "user") {
+  return `${scopeType === "group" ? "group" : "user"}:${String(value || "").trim()}`;
+}
 
 export function WorklogView({ onLoadIssue: _onLoadIssue, onLoadIssues, onLoadReport, onLoadUsers }: WorklogViewProps) {
   const [request, setRequest] = useState<JiraWorklogRequest>(DEFAULT_REQUEST);
@@ -122,7 +144,11 @@ export function WorklogView({ onLoadIssue: _onLoadIssue, onLoadIssues, onLoadRep
           setUserOptions(nextUsers);
           setUserLookup((current) => ({
             ...current,
-            ...Object.fromEntries(nextUsers.map((user) => [user.accountId, user])),
+            ...Object.fromEntries(nextUsers.map((user) => {
+              const scopeType = getWorklogPrincipalScopeType(user);
+              const selectionKey = scopeType === "group" ? String(user.groupId || "").trim() : String(user.accountId || "").trim();
+              return [getWorklogPrincipalLookupKey(selectionKey, scopeType), user];
+            })),
           }));
         })
         .catch(() => {
@@ -150,6 +176,7 @@ export function WorklogView({ onLoadIssue: _onLoadIssue, onLoadIssues, onLoadRep
       }
       if (!userPickerRef.current?.contains(event.target as Node)) {
         setUserPickerOpen(false);
+        clearUserSelection();
       }
     }
 
@@ -158,20 +185,26 @@ export function WorklogView({ onLoadIssue: _onLoadIssue, onLoadIssues, onLoadRep
   }, []);
 
   const selectedIssues = useMemo(
-    () => request.issueKeys.map((issueKey) => issueLookup[issueKey]).filter(Boolean),
-    [issueLookup, request.issueKeys]
+    () => [
+      ...request.projectKeys.map((projectKey) => issueLookup[getWorklogScopeLookupKey(projectKey, "project")]).filter(Boolean),
+      ...request.issueKeys.map((issueKey) => issueLookup[getWorklogScopeLookupKey(issueKey, "issue")]).filter(Boolean),
+    ],
+    [issueLookup, request.issueKeys, request.projectKeys]
   );
 
   const selectedUsers = useMemo(
-    () => request.assigneeAccountIds.map((accountId) => userLookup[accountId]).filter(Boolean),
-    [request.assigneeAccountIds, userLookup]
+    () => [
+      ...request.groupIds.map((groupId) => userLookup[getWorklogPrincipalLookupKey(groupId, "group")]).filter(Boolean),
+      ...request.assigneeAccountIds.map((accountId) => userLookup[getWorklogPrincipalLookupKey(accountId, "user")]).filter(Boolean),
+    ],
+    [request.assigneeAccountIds, request.groupIds, userLookup]
   );
 
   const visibleRows = report.rows;
-  const isEpicSelected = selectedIssues.some((issue) => String(issue.issueType || "").trim().toLowerCase() === "epic");
   const hasEpicData = visibleRows.some((row) => row.epicKey);
-  const grouping = useMemo(() => normalizeGrouping(request, hasEpicData || isEpicSelected), [hasEpicData, isEpicSelected, request]);
-  const tableColumns = useMemo(() => getTableColumns(grouping, hasEpicData), [grouping, hasEpicData]);
+  const hasGroupData = visibleRows.some((row) => Array.isArray(row.groupNames) && row.groupNames.length > 0);
+  const grouping = useMemo(() => normalizeGrouping(request), [request]);
+  const tableColumns = useMemo(() => getTableColumns(grouping, hasEpicData, hasGroupData), [grouping, hasEpicData, hasGroupData]);
 
   const groupedBlocks = useMemo(() => buildGroupedBlocks(visibleRows, grouping, tableColumns), [grouping, tableColumns, visibleRows]);
 
@@ -187,20 +220,51 @@ export function WorklogView({ onLoadIssue: _onLoadIssue, onLoadIssues, onLoadRep
   }, [groupedBlocks.length, visibleRows]);
 
   const chartData = useMemo(() => buildChartData(visibleRows, grouping.primary), [grouping.primary, visibleRows]);
-  const availableIssueOptions = issueOptions.filter((issue) => !request.issueKeys.includes(issue.key));
-  const availableUserOptions = userOptions.filter((user) => !request.assigneeAccountIds.includes(user.accountId));
+  const selectedIssueScopeKeys = useMemo(
+    () =>
+      new Set([
+        ...request.projectKeys.map((projectKey) => getWorklogScopeLookupKey(projectKey, "project")),
+        ...request.issueKeys.map((issueKey) => getWorklogScopeLookupKey(issueKey, "issue")),
+      ]),
+    [request.issueKeys, request.projectKeys]
+  );
+  const availableIssueOptions = issueOptions.filter((issue) => !selectedIssueScopeKeys.has(getWorklogScopeLookupKey(issue.key, issue.scopeType)));
+  const selectedPrincipalScopeKeys = useMemo(
+    () =>
+      new Set([
+        ...request.groupIds.map((groupId) => getWorklogPrincipalLookupKey(groupId, "group")),
+        ...request.assigneeAccountIds.map((accountId) => getWorklogPrincipalLookupKey(accountId, "user")),
+      ]),
+    [request.assigneeAccountIds, request.groupIds]
+  );
+  const availableUserOptions = userOptions.filter((user) => {
+    const principalKey = getWorklogPrincipalScopeType(user) === "group"
+      ? getWorklogPrincipalLookupKey(user.groupId || "", "group")
+      : getWorklogPrincipalLookupKey(user.accountId, "user");
+    return !selectedPrincipalScopeKeys.has(principalKey);
+  });
   const showIssuePicker = issuePickerOpen && (issuesLoading || availableIssueOptions.length > 0 || issueSearch.trim().length > 0);
   const showUserPicker = userPickerOpen && (usersLoading || availableUserOptions.length > 0 || userSearch.trim().length > 0);
-  const availablePrimaryGroups = getAvailableGroupByOptions(hasEpicData || isEpicSelected);
-  const availableSecondaryGroups = getAvailableSecondaryGroupByOptions(grouping.primary, hasEpicData || isEpicSelected);
+  const availablePrimaryGroups = getAvailableGroupByOptions();
+  const availableSecondaryGroups = getAvailableSecondaryGroupByOptions(grouping.primary);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setLoading(true);
     setError("");
     try {
+      const groupLabelsById = Object.fromEntries(
+        request.groupIds
+          .map((groupId) => {
+            const group = userLookup[getWorklogPrincipalLookupKey(groupId, "group")];
+            const displayName = String(group?.displayName || "").trim();
+            return displayName ? [groupId, displayName] : null;
+          })
+          .filter((entry): entry is [string, string] => Boolean(entry))
+      );
       const nextReport = await onLoadReport({
         ...request,
+        groupLabelsById,
         viewMode: viewModeFromGroupBy(grouping.primary),
         primaryGroupBy: grouping.primary,
         secondaryGroupBy: grouping.secondary,
@@ -219,47 +283,86 @@ export function WorklogView({ onLoadIssue: _onLoadIssue, onLoadIssues, onLoadRep
     setIssuesLoading(false);
   }
 
+  function clearUserSelection() {
+    setUserSearch("");
+    setUserOptions([]);
+    setUsersLoading(false);
+  }
+
   function handleSelectIssue(issue: JiraWorklogIssue) {
-    setIssueLookup((current) => ({ ...current, [issue.key]: issue }));
+    const scopeType = getWorklogScopeType(issue);
+    const lookupKey = getWorklogScopeLookupKey(issue.key, scopeType);
+
+    setIssueLookup((current) => ({ ...current, [lookupKey]: issue }));
     setRequest((current) => ({
       ...current,
-      issueKeys: current.issueKeys.includes(issue.key)
-        ? current.issueKeys
-        : [...current.issueKeys, issue.key],
+      issueKeys:
+        scopeType === "issue" && !current.issueKeys.includes(issue.key)
+          ? [...current.issueKeys, issue.key]
+          : current.issueKeys,
+      projectKeys:
+        scopeType === "project" && !current.projectKeys.includes(issue.key)
+          ? [...current.projectKeys, issue.key]
+          : current.projectKeys,
     }));
     setIssueSearch("");
     setIssuePickerOpen(false);
   }
 
-  function handleRemoveIssue(issueKey: string) {
+  function handleRemoveIssue(issue: JiraWorklogIssue) {
+    const scopeType = getWorklogScopeType(issue);
     setRequest((current) => {
-      const nextIssueKeys = current.issueKeys.filter((value) => value !== issueKey);
-      const remainingIssues = nextIssueKeys.map((key) => issueLookup[key]).filter(Boolean);
+      const nextIssueKeys = scopeType === "issue" ? current.issueKeys.filter((value) => value !== issue.key) : current.issueKeys;
+      const nextProjectKeys = scopeType === "project" ? current.projectKeys.filter((value) => value !== issue.key) : current.projectKeys;
+      const remainingIssues = nextIssueKeys.map((key) => issueLookup[getWorklogScopeLookupKey(key, "issue")]).filter(Boolean);
       const hasEpicRemaining = remainingIssues.some((issue) => String(issue.issueType || "").trim().toLowerCase() === "epic");
       return {
         ...current,
         issueKeys: nextIssueKeys,
+        projectKeys: nextProjectKeys,
         includeEpicChildren: hasEpicRemaining ? current.includeEpicChildren : false,
       };
     });
   }
 
   function handleSelectUser(user: JiraAssignableUser) {
-    setUserLookup((current) => ({ ...current, [user.accountId]: user }));
+    const scopeType = getWorklogPrincipalScopeType(user);
+    const selectionKey = scopeType === "group" ? String(user.groupId || "").trim() : String(user.accountId || "").trim();
+    if (!selectionKey) {
+      return;
+    }
+    const lookupKey = getWorklogPrincipalLookupKey(selectionKey, scopeType);
+
+    setUserLookup((current) => ({ ...current, [lookupKey]: user }));
     setRequest((current) => ({
       ...current,
-      assigneeAccountIds: current.assigneeAccountIds.includes(user.accountId)
-        ? current.assigneeAccountIds
-        : [...current.assigneeAccountIds, user.accountId],
+      assigneeAccountIds:
+        scopeType === "user" && !current.assigneeAccountIds.includes(selectionKey)
+          ? [...current.assigneeAccountIds, selectionKey]
+          : current.assigneeAccountIds,
+      groupIds:
+        scopeType === "group" && !current.groupIds.includes(selectionKey)
+          ? [...current.groupIds, selectionKey]
+          : current.groupIds,
     }));
     setUserSearch("");
     setUserPickerOpen(false);
   }
 
-  function handleRemoveUser(accountId: string) {
+  function handleRemoveUser(user: JiraAssignableUser) {
+    const scopeType = getWorklogPrincipalScopeType(user);
+    const selectionKey = scopeType === "group" ? String(user.groupId || "").trim() : String(user.accountId || "").trim();
+    if (!selectionKey) {
+      return;
+    }
     setRequest((current) => ({
       ...current,
-      assigneeAccountIds: current.assigneeAccountIds.filter((value) => value !== accountId),
+      assigneeAccountIds: scopeType === "user"
+        ? current.assigneeAccountIds.filter((value) => value !== selectionKey)
+        : current.assigneeAccountIds,
+      groupIds: scopeType === "group"
+        ? current.groupIds.filter((value) => value !== selectionKey)
+        : current.groupIds,
     }));
   }
 
@@ -339,7 +442,7 @@ export function WorklogView({ onLoadIssue: _onLoadIssue, onLoadIssues, onLoadRep
               <span>Issue</span>
               <div className="worklog-issue-picker" ref={issuePickerRef}>
                 <input
-                  placeholder="PROJ-123"
+                  placeholder="PROJ-123 nebo Mediox"
                   type="text"
                   value={issueSearch}
                   onChange={(event) => {
@@ -355,12 +458,27 @@ export function WorklogView({ onLoadIssue: _onLoadIssue, onLoadIssues, onLoadRep
                   <div className="worklog-issue-picker__menu">
                     {issuesLoading ? <div className="worklog-user-picker__empty">Loading…</div> : null}
                     {!issuesLoading && issueSearch.trim().length > 0 && availableIssueOptions.length === 0 ? <div className="worklog-user-picker__empty">No issues found</div> : null}
-                    {availableIssueOptions.map((issue) => (
-                      <button className="worklog-user-option" key={issue.key} onMouseDown={() => handleSelectIssue(issue)} type="button">
-                        <strong>{issue.key}</strong>
-                        <span>{issue.title} · {issue.issueType}</span>
-                      </button>
-                    ))}
+                    {!issuesLoading && availableIssueOptions.length > 0 ? (
+                      <>
+                        <div className="worklog-issue-picker__header" aria-hidden="true">
+                          <span>ID</span>
+                          <span>Name</span>
+                          <span>Type</span>
+                        </div>
+                        {availableIssueOptions.map((issue) => (
+                          <button
+                            className="worklog-issue-option"
+                            key={getWorklogScopeLookupKey(issue.key, issue.scopeType)}
+                            onMouseDown={() => handleSelectIssue(issue)}
+                            type="button"
+                          >
+                            <strong>{issue.key}</strong>
+                            <span>{issue.title}</span>
+                            <span>{issue.issueType || (getWorklogScopeType(issue) === "project" ? "Project" : "-")}</span>
+                          </button>
+                        ))}
+                      </>
+                    ) : null}
                   </div>
                 ) : null}
               </div>
@@ -370,29 +488,35 @@ export function WorklogView({ onLoadIssue: _onLoadIssue, onLoadIssues, onLoadRep
               <span>User or group</span>
               <div className="worklog-user-picker">
                 <input
-                  placeholder="Find user"
+                  placeholder="Find user or group"
                   type="text"
                   value={userSearch}
                   onChange={(event) => {
                     setUserSearch(event.target.value);
                     setUserPickerOpen(true);
                   }}
+                  onBlur={() => window.setTimeout(() => clearUserSelection(), 120)}
                   onFocus={() => setUserPickerOpen(true)}
                 />
                 {showUserPicker ? (
                   <div className="worklog-user-picker__menu">
                     {usersLoading ? <div className="worklog-user-picker__empty">Loading…</div> : null}
                     {!usersLoading && availableUserOptions.length === 0 ? (
-                      <div className="worklog-user-picker__empty">No people found</div>
+                      <div className="worklog-user-picker__empty">No people or groups found</div>
                     ) : null}
                     {availableUserOptions.map((user) => (
-                      <button className="worklog-user-option" key={user.accountId} onClick={() => handleSelectUser(user)} type="button">
+                      <button
+                        className="worklog-user-option"
+                        key={getWorklogPrincipalLookupKey(getWorklogPrincipalScopeType(user) === "group" ? user.groupId || "" : user.accountId, getWorklogPrincipalScopeType(user))}
+                        onMouseDown={() => handleSelectUser(user)}
+                        type="button"
+                      >
                         <span className="avatar-circle worklog-user-option__avatar" aria-hidden="true">
                           {user.avatarUrl ? <img alt="" src={user.avatarUrl} /> : getInitials(user.displayName)}
                         </span>
                         <span className="worklog-user-option__content">
                           <strong>{user.displayName}</strong>
-                          {user.emailAddress ? <span>{user.emailAddress}</span> : null}
+                          <span>{getWorklogPrincipalScopeType(user) === "group" ? "Jira group" : (user.emailAddress || "Jira user")}</span>
                         </span>
                       </button>
                     ))}
@@ -458,26 +582,29 @@ export function WorklogView({ onLoadIssue: _onLoadIssue, onLoadIssues, onLoadRep
               {selectedIssues.length > 0 || selectedUsers.length > 0 ? (
                 <div className="worklog-selected-list">
                   {selectedIssues.map((issue) => (
-                    <div className="worklog-selected-chip" key={issue.key}>
+                    <div className="worklog-selected-chip" key={getWorklogScopeLookupKey(issue.key, issue.scopeType)}>
                       <div>
                         <strong>{issue.key}</strong>
-                        <span>{issue.title}</span>
+                        <span>{issue.title}{issue.issueType ? ` · ${issue.issueType}` : ""}</span>
                       </div>
-                      <button aria-label={`Remove ${issue.key}`} onClick={() => handleRemoveIssue(issue.key)} type="button">
+                      <button aria-label={`Remove ${issue.key}`} onClick={() => handleRemoveIssue(issue)} type="button">
                         ×
                       </button>
                     </div>
                   ))}
                   {selectedUsers.map((user) => (
-                    <div className="worklog-selected-chip" key={user.accountId}>
+                    <div
+                      className="worklog-selected-chip"
+                      key={getWorklogPrincipalLookupKey(getWorklogPrincipalScopeType(user) === "group" ? user.groupId || "" : user.accountId, getWorklogPrincipalScopeType(user))}
+                    >
                       <span className="avatar-circle worklog-selected-chip__avatar" aria-hidden="true">
                         {user.avatarUrl ? <img alt="" src={user.avatarUrl} /> : getInitials(user.displayName)}
                       </span>
                       <div>
                         <strong>{user.displayName}</strong>
-                        {user.emailAddress ? <span>{user.emailAddress}</span> : null}
+                        <span>{getWorklogPrincipalScopeType(user) === "group" ? "Jira group" : (user.emailAddress || "Jira user")}</span>
                       </div>
-                      <button aria-label={`Remove ${user.displayName}`} onClick={() => handleRemoveUser(user.accountId)} type="button">
+                      <button aria-label={`Remove ${user.displayName}`} onClick={() => handleRemoveUser(user)} type="button">
                         ×
                       </button>
                     </div>
@@ -490,14 +617,15 @@ export function WorklogView({ onLoadIssue: _onLoadIssue, onLoadIssues, onLoadRep
               <div className="worklog-toolbar__toggles">
                 <label className="settings-toggle">
                   <button
-                    className={`toggle-switch ${request.includeEpicChildren ? "is-active" : ""} ${!isEpicSelected ? "is-disabled" : ""}`}
-                    disabled={!isEpicSelected}
+                    aria-label="Epic - Include children"
+                    aria-pressed={request.includeEpicChildren}
+                    className={`toggle-switch ${request.includeEpicChildren ? "is-active" : ""}`}
                     onClick={() => setRequest({ ...request, includeEpicChildren: !request.includeEpicChildren })}
                     type="button"
                   >
                     <span className="toggle-switch__knob" />
                   </button>
-                  <span>Include children</span>
+                  <span>Epic - Include children</span>
                 </label>
               </div>
 
@@ -592,7 +720,7 @@ function WorklogGroupedTableBlock({
         <tr key={row.id}>
           {columns.map((column, columnIndex) => (
             <td key={`${row.id}-${column}`} title={getRowMeta(row, column)}>
-              {shouldRenderColumnValue(block.rows, rowIndex, columnIndex, columns) ? getRowLabel(row, column) : ""}
+              {shouldRenderColumnValue(block.rows, rowIndex, columnIndex, columns) ? renderRowValue(row, column) : ""}
             </td>
           ))}
           <td className="worklog-sheet__time">{formatDuration(row.secondsSpent)}</td>
@@ -656,24 +784,22 @@ function buildChartData(rows: JiraWorklogRow[], groupBy: JiraWorklogGroupBy) {
     .sort((left, right) => right.secondsSpent - left.secondsSpent);
 }
 
-function normalizeGrouping(request: JiraWorklogRequest, epicAvailable: boolean): WorklogGrouping {
-  const primary = epicAvailable
-    ? (request.primaryGroupBy || groupByFromViewMode(request.viewMode))
-    : ((request.primaryGroupBy || groupByFromViewMode(request.viewMode)) === "epic" ? "issue" : (request.primaryGroupBy || groupByFromViewMode(request.viewMode)));
+function normalizeGrouping(request: JiraWorklogRequest): WorklogGrouping {
+  const primary = request.primaryGroupBy || groupByFromViewMode(request.viewMode);
   const secondaryCandidate = request.secondaryGroupBy || "";
-  const secondary = secondaryCandidate && secondaryCandidate !== primary && (epicAvailable || secondaryCandidate !== "epic") ? secondaryCandidate : "";
+  const secondary = secondaryCandidate && secondaryCandidate !== primary ? secondaryCandidate : "";
   return {
     primary,
     secondary,
   };
 }
 
-function getAvailableGroupByOptions(epicAvailable: boolean): JiraWorklogGroupBy[] {
-  return epicAvailable ? ["epic", "issue", "user"] : ["issue", "user"];
+function getAvailableGroupByOptions(): JiraWorklogGroupBy[] {
+  return ["epic", "issue", "user", "group"];
 }
 
-function getAvailableSecondaryGroupByOptions(primary: JiraWorklogGroupBy, epicAvailable: boolean): JiraWorklogGroupBy[] {
-  return getAvailableGroupByOptions(epicAvailable).filter((option) => option !== primary);
+function getAvailableSecondaryGroupByOptions(primary: JiraWorklogGroupBy): JiraWorklogGroupBy[] {
+  return getAvailableGroupByOptions().filter((option) => option !== primary);
 }
 
 function groupByFromViewMode(viewMode: JiraWorklogRequest["viewMode"]): JiraWorklogGroupBy {
@@ -696,9 +822,14 @@ function viewModeFromGroupBy(groupBy: JiraWorklogGroupBy): JiraWorklogRequest["v
   return "issue-first";
 }
 
-function getTableColumns(grouping: WorklogGrouping, hasEpicData: boolean): JiraWorklogGroupBy[] {
+function getTableColumns(grouping: WorklogGrouping, hasEpicData: boolean, hasGroupData: boolean): JiraWorklogGroupBy[] {
   const leadingEpic = hasEpicData && grouping.primary !== "epic" && grouping.secondary !== "epic" ? (["epic"] as JiraWorklogGroupBy[]) : [];
-  const availableDimensions = hasEpicData ? (["epic", "issue", "user"] as JiraWorklogGroupBy[]) : (["issue", "user"] as JiraWorklogGroupBy[]);
+  const availableDimensions: JiraWorklogGroupBy[] = [
+    ...(hasEpicData ? (["epic"] as JiraWorklogGroupBy[]) : []),
+    "issue",
+    "user",
+    ...(hasGroupData ? (["group"] as JiraWorklogGroupBy[]) : []),
+  ];
   return [...new Set([...leadingEpic, grouping.primary, ...(grouping.secondary ? [grouping.secondary] : []), ...availableDimensions])];
 }
 
@@ -707,7 +838,9 @@ function aggregateRows(rows: JiraWorklogRow[]): GroupedRow[] {
 
   for (const row of rows) {
     const epic = row.epicKey || "Without epic";
-    const key = [epic, row.issueKey, row.author].join("|");
+    const groupNames = getWorklogGroupNames(row);
+    const group = groupNames.join(", ") || "Without group";
+    const key = [epic, row.issueKey, row.author, group].join("|");
     const existing = aggregated.get(key);
 
     if (existing) {
@@ -721,6 +854,9 @@ function aggregateRows(rows: JiraWorklogRow[]): GroupedRow[] {
       epicMeta: row.epicKey || "",
       issue: row.issueKey,
       issueMeta: row.issueTitle,
+      issueUrl: row.issueUrl,
+      group,
+      groupMeta: groupNames.join(", "),
       user: row.author,
       userMeta: row.accountId,
       secondsSpent: row.secondsSpent,
@@ -744,6 +880,9 @@ function getRowLabel(row: GroupedRow, column: JiraWorklogGroupBy) {
   if (column === "epic") {
     return row.epic;
   }
+  if (column === "group") {
+    return row.group;
+  }
   if (column === "user") {
     return row.user;
   }
@@ -754,20 +893,44 @@ function getRowMeta(row: GroupedRow, column: JiraWorklogGroupBy) {
   if (column === "epic") {
     return row.epicMeta;
   }
+  if (column === "group") {
+    return row.groupMeta;
+  }
   if (column === "user") {
     return row.userMeta;
   }
   return row.issueMeta;
 }
 
+function renderRowValue(row: GroupedRow, column: JiraWorklogGroupBy) {
+  const label = getRowLabel(row, column);
+  if (column === "issue" && row.issueUrl) {
+    return (
+      <a className="worklog-sheet__link" href={row.issueUrl} rel="noreferrer" target="_blank">
+        {label}
+      </a>
+    );
+  }
+  return label;
+}
+
 function getWorklogRowGroupValue(row: JiraWorklogRow, groupBy: JiraWorklogGroupBy) {
   if (groupBy === "epic") {
-    return row.epicKey || row.issueKey;
+    return row.epicKey || "Without epic";
+  }
+  if (groupBy === "group") {
+    return getWorklogGroupNames(row).join(", ") || "Without group";
   }
   if (groupBy === "user") {
     return row.author;
   }
   return row.issueKey;
+}
+
+function getWorklogGroupNames(row: JiraWorklogRow) {
+  return Array.isArray(row.groupNames)
+    ? row.groupNames.map((groupName) => String(groupName || "").trim()).filter(Boolean)
+    : [];
 }
 
 function shouldRenderColumnValue(rows: GroupedRow[], rowIndex: number, columnIndex: number, columns: JiraWorklogGroupBy[]) {

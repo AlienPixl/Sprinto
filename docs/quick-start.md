@@ -2,7 +2,10 @@
 
 ## Local Startup
 
+Review `docker-compose.example.yml`, then rename it to `docker-compose.yml` before the first startup.
+
 ```bash
+cp docker-compose.example.yml docker-compose.yml
 cp .env.example .env
 docker compose up --build
 ```

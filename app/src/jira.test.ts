@@ -10,8 +10,10 @@ import {
   listJiraBoards,
   listJiraIssues,
   listJiraSprintIssues,
+  listJiraWorklogUsers,
   parseImageDataUrl,
   postJiraIssueReport,
+  searchJiraWorklogIssues,
 } from "./jira.js";
 
 const settings = {
@@ -472,6 +474,7 @@ describe("jira helpers", () => {
         emailAddress: "alice@example.com",
         avatarUrl: "https://example.com/alice.png",
         active: true,
+        scopeType: "user",
       },
       {
         accountId: "acc-2",
@@ -479,6 +482,7 @@ describe("jira helpers", () => {
         emailAddress: "bob@example.com",
         avatarUrl: "",
         active: true,
+        scopeType: "user",
       },
     ]);
     expect(fetchMock.mock.calls[0][0]).toContain("/rest/api/3/user/assignable/search?");
@@ -511,24 +515,78 @@ describe("jira helpers", () => {
     expect(fetchMock.mock.calls[1][1]?.body).toBe(JSON.stringify({ accountId: null }));
   });
 
-  it("builds worklog rows in the requested date window", async () => {
-    vi.stubGlobal("fetch", vi.fn()
+  it("lists Jira worklog groups together with users for search", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ([
+          {
+            accountId: "acc-1",
+            displayName: "Alice Example",
+            emailAddress: "alice@example.com",
+            active: true,
+            avatarUrls: {
+              "24x24": "https://example.com/alice.png",
+            },
+          },
+        ]),
+      })
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ({
-          issues: [{ key: "PROJ-1" }],
+          groups: [
+            {
+              groupId: "group-1",
+              name: "Finance Leads",
+            },
+          ],
+        }),
+      });
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    const users = await listJiraWorklogUsers(settings, "fin");
+
+    expect(users).toEqual([
+      {
+        accountId: "group:group-1",
+        displayName: "Finance Leads",
+        emailAddress: "",
+        avatarUrl: "",
+        active: true,
+        scopeType: "group",
+        groupId: "group-1",
+      },
+      {
+        accountId: "acc-1",
+        displayName: "Alice Example",
+        emailAddress: "alice@example.com",
+        avatarUrl: "https://example.com/alice.png",
+        active: true,
+        scopeType: "user",
+      },
+    ]);
+    expect(fetchMock.mock.calls[1][0]).toContain("/rest/api/3/groups/picker?");
+    expect(fetchMock.mock.calls[1][0]).toContain("query=fin");
+  });
+
+  it("builds worklog rows in the requested date window", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          issues: [{
+            key: "PROJ-1",
+            fields: {
+              summary: "First issue",
+            },
+          }],
           total: 1,
         }),
       })
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ({
-          fields: { summary: "First issue" },
-        }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
+          total: 1,
           worklogs: [
             {
               started: "2026-04-01T10:00:00.000+0000",
@@ -537,19 +595,208 @@ describe("jira helpers", () => {
             },
           ],
         }),
-      }) as unknown as typeof fetch);
+      });
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
 
     const rows = await buildJiraWorklogReport(settings, {
       dateFrom: "2026-04-01",
       dateTo: "2026-04-02",
       issueKeys: [],
+      projectKeys: [],
       includeEpicChildren: false,
       assigneeAccountIds: [],
+      groupIds: [],
       viewMode: "issue-first",
     });
 
     expect(rows).toHaveLength(1);
     expect(rows[0].author).toBe("Alice");
     expect(rows[0].secondsSpent).toBe(7200);
+    expect(rows[0].issueUrl).toBe("https://example.atlassian.net/browse/PROJ-1");
+    const firstSearchBody = JSON.parse(String(fetchMock.mock.calls[0][1]?.body || "{}"));
+    expect(firstSearchBody.jql).toContain('worklogDate >= "2026-04-01"');
+    expect(firstSearchBody.jql).toContain('worklogDate <= "2026-04-02"');
+    expect(String(fetchMock.mock.calls[1][0] || "")).toContain("/rest/api/3/issue/PROJ-1/worklog?");
+    expect(String(fetchMock.mock.calls[1][0] || "")).toContain("startedAfter=");
+    expect(String(fetchMock.mock.calls[1][0] || "")).toContain("startedBefore=");
+  });
+
+  it("shows matching projects before issues in worklog search", async () => {
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          values: [
+            { key: "MED", name: "Mediox" },
+          ],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          sections: [
+            {
+              issues: [{ key: "MED-1" }],
+            },
+          ],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          issues: [
+            {
+              key: "MED-1",
+              fields: {
+                summary: "Mediox backlog cleanup",
+                issuetype: { name: "Scénář", untranslatedName: "Story" },
+              },
+            },
+          ],
+          total: 1,
+        }),
+      }) as unknown as typeof fetch);
+
+    const results = await searchJiraWorklogIssues(settings, "Mediox");
+
+    expect(results).toHaveLength(2);
+    expect(results[0]).toMatchObject({
+      key: "MED",
+      title: "Mediox",
+      issueType: "Project",
+      scopeType: "project",
+    });
+    expect(results[1]).toMatchObject({
+      key: "MED-1",
+      title: "Mediox backlog cleanup",
+      issueType: "Story",
+      scopeType: "issue",
+    });
+  });
+
+  it("builds worklog rows for a selected Jira project", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          issues: [{
+            key: "MED-1",
+            fields: { summary: "Mediox work item" },
+          }],
+          total: 1,
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          total: 1,
+          worklogs: [
+            {
+              started: "2026-04-01T11:00:00.000+0000",
+              timeSpentSeconds: 1800,
+              author: { accountId: "xyz", displayName: "Bob" },
+            },
+          ],
+        }),
+      });
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    const rows = await buildJiraWorklogReport(settings, {
+      dateFrom: "2026-04-01",
+      dateTo: "2026-04-02",
+      issueKeys: [],
+      projectKeys: ["MED"],
+      includeEpicChildren: false,
+      assigneeAccountIds: [],
+      groupIds: [],
+      viewMode: "issue-first",
+    });
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      issueKey: "MED-1",
+      issueTitle: "Mediox work item",
+      issueUrl: "https://example.atlassian.net/browse/MED-1",
+      author: "Bob",
+      secondsSpent: 1800,
+    });
+    const projectSearchBody = JSON.parse(String(fetchMock.mock.calls[0][1]?.body || "{}"));
+    expect(projectSearchBody.jql).toContain('project = "MED"');
+    expect(projectSearchBody.jql).toContain('worklogDate >= "2026-04-01"');
+    expect(String(fetchMock.mock.calls[1][0] || "")).toContain("startedAfter=");
+  });
+
+  it("filters worklog rows by selected Jira group members", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          issues: [{
+            key: "MED-1",
+            fields: { summary: "Mediox work item" },
+          }],
+          total: 1,
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          isLast: true,
+          values: [
+            {
+              accountId: "group-user-1",
+              displayName: "Alice Example",
+              emailAddress: "alice@example.com",
+              active: true,
+              accountType: "atlassian",
+              avatarUrls: {},
+            },
+          ],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          total: 2,
+          worklogs: [
+            {
+              started: "2026-04-01T11:00:00.000+0000",
+              timeSpentSeconds: 1800,
+              author: { accountId: "group-user-1", displayName: "Alice Example" },
+            },
+            {
+              started: "2026-04-01T12:00:00.000+0000",
+              timeSpentSeconds: 1200,
+              author: { accountId: "outsider", displayName: "Bob Example" },
+            },
+          ],
+        }),
+      });
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    const rows = await buildJiraWorklogReport(settings, {
+      dateFrom: "2026-04-01",
+      dateTo: "2026-04-02",
+      issueKeys: [],
+      projectKeys: ["MED"],
+      includeEpicChildren: false,
+      assigneeAccountIds: [],
+      groupIds: ["group-1"],
+      groupLabelsById: {
+        "group-1": "Finance Leads",
+      },
+      viewMode: "issue-first",
+    });
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      issueKey: "MED-1",
+      groupNames: ["Finance Leads"],
+      author: "Alice Example",
+      secondsSpent: 1800,
+    });
+    const groupSearchBody = JSON.parse(String(fetchMock.mock.calls[0][1]?.body || "{}"));
+    expect(groupSearchBody.jql).toContain('project = "MED"');
+    expect(String(fetchMock.mock.calls[2][0] || "")).toContain("startedBefore=");
   });
 });

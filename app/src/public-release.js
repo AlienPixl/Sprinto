@@ -162,6 +162,14 @@ export function buildPublicChangelogIndex(changelogFiles) {
   return `${lines.join("\n")}\n`;
 }
 
+export function mapPublicReleaseOutputPath(relativePath) {
+  const normalizedPath = normalizePathSpec(relativePath);
+  if (normalizedPath === "docker-compose.yml") {
+    return "docker-compose.example.yml";
+  }
+  return normalizedPath;
+}
+
 function pathBasename(relativePath) {
   return String(relativePath || "").split("/").pop() || "";
 }

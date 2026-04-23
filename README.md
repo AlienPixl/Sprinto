@@ -16,7 +16,10 @@ Sprinto is a locally hosted planning poker application for team estimation.
 
 ## Quick Start
 
+Review `docker-compose.example.yml`, then rename it to `docker-compose.yml` before the first startup.
+
 ```bash
+cp docker-compose.example.yml docker-compose.yml
 cp .env.example .env
 docker compose up --build
 ```
@@ -62,7 +65,8 @@ Sprinto publishes versioned GitHub releases as `Sprinto vX.Y.Z`.
 Each release ships:
 
 - a Linux `amd64` Docker image tarball
-- a release-ready Docker Compose file generated from the same `docker-compose.yml`
+- a `docker-compose.example.yml` deployment template
+- a release `.env.example` template
 - release notes from `changelog/vX.Y.Z.md`
 
 ## Documentation

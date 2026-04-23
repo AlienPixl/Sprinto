@@ -118,7 +118,100 @@ function mapJiraUser(user) {
     emailAddress: String(user?.emailAddress || ""),
     avatarUrl: String(user?.avatarUrls?.["24x24"] || user?.avatarUrls?.["16x16"] || ""),
     active: user?.active !== false,
+    scopeType: "user",
   };
+}
+
+function mapJiraWorklogGroup(group) {
+  const groupId = String(group?.groupId || "").trim();
+  const name = String(group?.name || "").trim();
+  return {
+    accountId: groupId ? `group:${groupId}` : "",
+    displayName: name,
+    emailAddress: "",
+    avatarUrl: "",
+    active: true,
+    scopeType: "group",
+    groupId,
+  };
+}
+
+function mapJiraWorklogIssueOption(issue) {
+  return {
+    key: String(issue?.key || ""),
+    title: String(issue?.fields?.summary || issue?.key || ""),
+    issueType: normalizeJiraIssueTypeName(issue?.fields?.issuetype),
+    scopeType: "issue",
+  };
+}
+
+function mapJiraWorklogProjectOption(project) {
+  return {
+    key: String(project?.key || ""),
+    title: String(project?.name || project?.key || ""),
+    issueType: "Project",
+    scopeType: "project",
+  };
+}
+
+function rankWorklogMatch(query, value) {
+  const normalizedQuery = String(query || "").trim().toLowerCase();
+  const normalizedValue = String(value || "").trim().toLowerCase();
+
+  if (!normalizedQuery || !normalizedValue) {
+    return 999;
+  }
+  if (normalizedValue === normalizedQuery) {
+    return 0;
+  }
+  if (normalizedValue.startsWith(normalizedQuery)) {
+    return 1;
+  }
+  if (normalizedValue.includes(normalizedQuery)) {
+    return 2;
+  }
+  return 3;
+}
+
+function dedupeWorklogScopeOptions(items) {
+  const seen = new Set();
+  return items.filter((item) => {
+    const key = `${String(item?.scopeType || "issue")}:${String(item?.key || "").trim()}`;
+    if (!String(item?.key || "").trim() || seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+}
+
+function normalizeJiraIssueTypeName(issueType) {
+  const rawLabel = String(issueType?.untranslatedName || issueType?.name || issueType || "").trim();
+  const normalizedLabel = rawLabel.toLowerCase();
+  const knownLabels = {
+    "bug": "Bug",
+    "chyba": "Bug",
+    "epic": "Epic",
+    "epos": "Epic",
+    "issue": "Issue",
+    "projekt": "Project",
+    "project": "Project",
+    "scénář": "Story",
+    "scenario": "Story",
+    "story": "Story",
+    "sub-task": "Sub-task",
+    "subtask": "Sub-task",
+    "podúkol": "Sub-task",
+    "pod-úkol": "Sub-task",
+    "task": "Task",
+    "úkol": "Task",
+  };
+
+  return knownLabels[normalizedLabel] || rawLabel;
+}
+
+function isJiraEpicIssueType(issueType) {
+  return normalizeJiraIssueTypeName(issueType).trim().toLowerCase() === "epic";
 }
 
 function isHumanJiraUser(user) {
@@ -251,8 +344,52 @@ export async function listJiraWorklogUsers(settings, search = "") {
     startAt += values.length;
   }
 
-  return [...new Map(users.map((user) => [user.accountId, user])).values()]
+  let groups = [];
+  if (normalizedSearch) {
+    const params = new URLSearchParams({
+      query: normalizedSearch,
+      maxResults: "20",
+      caseInsensitive: "true",
+    });
+    const groupMatches = await jiraRequest(jira, `/rest/api/3/groups/picker?${params.toString()}`);
+    const values = Array.isArray(groupMatches?.groups) ? groupMatches.groups : [];
+    groups = values.map(mapJiraWorklogGroup).filter((group) => group.groupId && group.displayName);
+  }
+
+  const uniqueGroups = [...new Map(groups.map((group) => [group.groupId, group])).values()]
     .sort((left, right) => left.displayName.localeCompare(right.displayName));
+  const uniqueUsers = [...new Map(users.map((user) => [user.accountId, user])).values()]
+    .sort((left, right) => left.displayName.localeCompare(right.displayName));
+
+  return [...uniqueGroups, ...uniqueUsers];
+}
+
+async function listJiraGroupMembers(settings, groupId) {
+  const jira = ensureJiraConfigured(settings);
+  const normalizedGroupId = String(groupId || "").trim();
+  if (!normalizedGroupId) {
+    return [];
+  }
+
+  const users = [];
+  let startAt = 0;
+  while (startAt < 5000) {
+    const params = new URLSearchParams({
+      groupId: normalizedGroupId,
+      includeInactiveUsers: "false",
+      startAt: String(startAt),
+      maxResults: "50",
+    });
+    const page = await jiraRequest(jira, `/rest/api/3/group/member?${params.toString()}`);
+    const values = Array.isArray(page?.values) ? page.values : [];
+    users.push(...values.filter(isHumanJiraUser).map(mapJiraUser).filter((user) => user.accountId && user.active));
+    if (page?.isLast === true || values.length < 50) {
+      break;
+    }
+    startAt += values.length;
+  }
+
+  return [...new Map(users.map((user) => [user.accountId, user])).values()];
 }
 
 function normalizeImportOrder(value) {
@@ -1613,6 +1750,125 @@ async function searchIssues(settings, jql, fields = ["summary", "issuetype", "st
   return issues;
 }
 
+async function fetchIssueWorklogsInRange(settings, issueKey, dateFrom, dateTo) {
+  const jira = ensureJiraConfigured(settings);
+  const worklogs = [];
+  let startAt = 0;
+  const startedAfter = Math.max(0, Number(dateFrom?.getTime?.() || 0));
+  const startedBefore = Math.max(startedAfter, Number(dateTo?.getTime?.() || 0) + 1);
+
+  while (true) {
+    const params = new URLSearchParams({
+      startAt: String(startAt),
+      maxResults: "100",
+      startedAfter: String(startedAfter),
+      startedBefore: String(startedBefore),
+    });
+    const page = await jiraRequest(jira, `/rest/api/3/issue/${encodeURIComponent(issueKey)}/worklog?${params.toString()}`);
+    const values = Array.isArray(page?.worklogs) ? page.worklogs : [];
+    worklogs.push(...values);
+
+    if (startAt + values.length >= Number(page?.total || 0) || values.length === 0) {
+      break;
+    }
+
+    startAt += values.length;
+  }
+
+  return worklogs;
+}
+
+function escapeJqlString(value) {
+  return String(value || "")
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"');
+}
+
+function formatJqlDate(value) {
+  const normalized = String(value || "").trim();
+  const match = normalized.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (match) {
+    return `${match[1]}-${match[2]}-${match[3]}`;
+  }
+
+  const parsed = new Date(normalized);
+  if (Number.isNaN(parsed.getTime())) {
+    return normalized;
+  }
+
+  return parsed.toISOString().slice(0, 10);
+}
+
+function buildJqlList(field, values) {
+  const normalizedValues = Array.isArray(values)
+    ? values.map((value) => String(value || "").trim()).filter(Boolean)
+    : [];
+
+  if (normalizedValues.length === 0) {
+    return "";
+  }
+
+  if (normalizedValues.length === 1) {
+    return `${field} = "${escapeJqlString(normalizedValues[0])}"`;
+  }
+
+  return `${field} in (${normalizedValues.map((value) => `"${escapeJqlString(value)}"`).join(", ")})`;
+}
+
+function buildWorklogDateJql(filters) {
+  const from = formatJqlDate(filters?.dateFrom);
+  const to = formatJqlDate(filters?.dateTo);
+  return `worklogDate >= "${escapeJqlString(from)}" AND worklogDate <= "${escapeJqlString(to)}"`;
+}
+
+function mergeIssueMap(target, issues) {
+  issues.forEach((issue) => {
+    const issueKey = String(issue?.key || "").trim();
+    if (!issueKey) {
+      return;
+    }
+    target.set(issueKey, issue);
+  });
+}
+
+async function mapWithConcurrency(items, concurrency, iteratee) {
+  const values = Array.isArray(items) ? items : [];
+  const results = new Array(values.length);
+  let nextIndex = 0;
+
+  async function worker() {
+    while (nextIndex < values.length) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      results[currentIndex] = await iteratee(values[currentIndex], currentIndex);
+    }
+  }
+
+  const workerCount = Math.max(1, Math.min(Number(concurrency) || 1, values.length || 1));
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+  return results;
+}
+
+async function searchJiraProjects(settings, query) {
+  const jira = ensureJiraConfigured(settings);
+  const page = await jiraRequest(
+    jira,
+    `/rest/api/3/project/search?query=${encodeURIComponent(String(query || "").trim())}&maxResults=10`
+  );
+  const projects = Array.isArray(page?.values) ? page.values : [];
+
+  return projects
+    .map(mapJiraWorklogProjectOption)
+    .sort((left, right) => {
+      const leftRank = Math.min(rankWorklogMatch(query, left.key), rankWorklogMatch(query, left.title));
+      const rightRank = Math.min(rankWorklogMatch(query, right.key), rankWorklogMatch(query, right.title));
+      if (leftRank !== rightRank) {
+        return leftRank - rightRank;
+      }
+      return left.title.localeCompare(right.title);
+    });
+}
+
 export async function searchJiraWorklogIssues(settings, query = "") {
   const jira = ensureJiraConfigured(settings);
   const normalizedQuery = String(query || "").trim();
@@ -1621,11 +1877,18 @@ export async function searchJiraWorklogIssues(settings, query = "") {
     return [];
   }
 
+  let projectMatches = [];
+  try {
+    projectMatches = await searchJiraProjects(jira, normalizedQuery);
+  } catch {
+    projectMatches = [];
+  }
+
+  let exactIssue = null;
   const exactIssueKeyMatch = normalizedQuery.toUpperCase().match(/^[A-Z][A-Z0-9_]*-\d+$/);
   if (exactIssueKeyMatch) {
     try {
-      const exactIssue = await getJiraWorklogIssue(jira, exactIssueKeyMatch[0]);
-      return exactIssue ? [exactIssue] : [];
+      exactIssue = await getJiraWorklogIssue(jira, exactIssueKeyMatch[0]);
     } catch {
     }
   }
@@ -1645,11 +1908,12 @@ export async function searchJiraWorklogIssues(settings, query = "") {
       `summary ~ "${normalizedQuery.replace(/"/g, '\\"')}" order by updated desc`,
       ["summary", "issuetype"]
     );
-    return fallbackIssues.slice(0, 20).map((issue) => ({
-      key: String(issue?.key || ""),
-      title: String(issue?.fields?.summary || issue?.key || ""),
-      issueType: String(issue?.fields?.issuetype?.name || ""),
-    }));
+    const issueMatches = fallbackIssues.slice(0, 20).map(mapJiraWorklogIssueOption);
+    return dedupeWorklogScopeOptions(
+      exactIssueKeyMatch
+        ? [exactIssue, ...projectMatches, ...issueMatches]
+        : [...projectMatches, ...issueMatches]
+    ).slice(0, 20);
   }
 
   const detailedIssues = await searchIssues(
@@ -1658,11 +1922,12 @@ export async function searchJiraWorklogIssues(settings, query = "") {
     ["summary", "issuetype"]
   );
 
-  return detailedIssues.map((issue) => ({
-    key: String(issue?.key || ""),
-    title: String(issue?.fields?.summary || issue?.key || ""),
-    issueType: String(issue?.fields?.issuetype?.name || ""),
-  }));
+  const issueMatches = detailedIssues.map(mapJiraWorklogIssueOption);
+  return dedupeWorklogScopeOptions(
+    exactIssueKeyMatch
+      ? [exactIssue, ...projectMatches, ...issueMatches]
+      : [...projectMatches, ...issueMatches]
+  ).slice(0, 20);
 }
 
 export async function getJiraWorklogIssue(settings, issueKey) {
@@ -1674,89 +1939,165 @@ export async function getJiraWorklogIssue(settings, issueKey) {
   return {
     key: String(issue?.key || normalizedIssueKey),
     title: String(issue?.fields?.summary || normalizedIssueKey),
-    issueType: String(issue?.fields?.issuetype?.name || ""),
+    issueType: normalizeJiraIssueTypeName(issue?.fields?.issuetype),
+    scopeType: "issue",
   };
 }
 
 async function collectIssueKeysForWorklog(settings, filters) {
-  const issueKeys = new Set();
+  const issueMap = new Map();
   const epicByIssueKey = new Map();
+  const worklogDateClause = buildWorklogDateJql(filters);
   const selectedIssueKeys = Array.isArray(filters.issueKeys)
     ? filters.issueKeys.map((value) => String(value || "").trim()).filter(Boolean)
     : (filters.epicKey ? [String(filters.epicKey || "").trim()] : []);
+  const selectedProjectKeys = Array.isArray(filters.projectKeys)
+    ? filters.projectKeys.map((value) => String(value || "").trim()).filter(Boolean)
+    : [];
   const selectedIssueDetails = await Promise.all(selectedIssueKeys.map((issueKey) => fetchIssueDetails(settings, issueKey, ["summary", "issuetype"])));
 
   if (selectedIssueKeys.length > 0) {
-    selectedIssueKeys.forEach((issueKey, index) => {
-      issueKeys.add(issueKey);
-      const issueType = String(selectedIssueDetails[index]?.fields?.issuetype?.name || "").trim().toLowerCase();
-      if (issueType === "epic") {
+    const selectedIssues = await searchIssues(
+      settings,
+      `${buildJqlList("issuekey", selectedIssueKeys)} AND ${worklogDateClause} order by updated desc`,
+      ["summary", "issuetype", "status"]
+    );
+    mergeIssueMap(issueMap, selectedIssues);
+
+    selectedIssueDetails.forEach((issue, index) => {
+      const issueKey = String(issue?.key || selectedIssueKeys[index] || "").trim();
+      if (issueKey && !issueMap.has(issueKey)) {
+        issueMap.set(issueKey, issue);
+      }
+      const issueType = selectedIssueDetails[index]?.fields?.issuetype;
+      if (isJiraEpicIssueType(issueType)) {
         epicByIssueKey.set(issueKey, issueKey);
       }
     });
+
     if (filters.includeEpicChildren) {
-      for (const [index, issueKey] of selectedIssueKeys.entries()) {
-        const issueType = String(selectedIssueDetails[index]?.fields?.issuetype?.name || "").trim().toLowerCase();
-        if (issueType !== "epic") {
-          continue;
-        }
-        const children = await searchIssues(settings, `"Epic Link" = "${String(issueKey).replace(/"/g, '\\"')}"`, ["summary", "issuetype", "status", "issuelinks"]);
+      const selectedEpicKeys = selectedIssueKeys.filter((issueKey, index) => isJiraEpicIssueType(selectedIssueDetails[index]?.fields?.issuetype));
+      for (const epicKey of selectedEpicKeys) {
+        const children = await searchIssues(
+          settings,
+          `"Epic Link" = "${escapeJqlString(epicKey)}" AND ${worklogDateClause} order by updated desc`,
+          ["summary", "issuetype", "status", "issuelinks"]
+        );
         children.forEach((issue) => {
-          const childKey = String(issue.key);
-          issueKeys.add(childKey);
+          const childKey = String(issue?.key || "").trim();
+          if (!childKey) {
+            return;
+          }
+          issueMap.set(childKey, issue);
           if (!epicByIssueKey.has(childKey)) {
-            epicByIssueKey.set(childKey, issueKey);
+            epicByIssueKey.set(childKey, epicKey);
           }
         });
       }
     }
   }
 
-  if (issueKeys.size === 0) {
-    const fallback = await searchIssues(settings, "updated is not EMPTY order by updated desc", ["summary", "issuetype", "status"]);
-    fallback.slice(0, 50).forEach((issue) => issueKeys.add(String(issue.key)));
+  if (selectedProjectKeys.length > 0) {
+    const projectIssues = await searchIssues(
+      settings,
+      `${buildJqlList("project", selectedProjectKeys)} AND ${worklogDateClause} order by updated desc`,
+      ["summary", "issuetype", "status"]
+    );
+    mergeIssueMap(issueMap, projectIssues);
+  }
+
+  if (issueMap.size === 0 && selectedIssueKeys.length === 0 && selectedProjectKeys.length === 0) {
+    const fallback = await searchIssues(
+      settings,
+      `${worklogDateClause} order by updated desc`,
+      ["summary", "issuetype", "status"]
+    );
+    mergeIssueMap(issueMap, fallback);
   }
 
   return {
-    issueKeys: [...issueKeys],
+    issues: [...issueMap.values()],
     epicByIssueKey,
   };
 }
 
 export async function buildJiraWorklogReport(settings, filters) {
   const jira = ensureJiraConfigured(settings);
-  const { issueKeys, epicByIssueKey } = await collectIssueKeysForWorklog(jira, filters);
+  const { issues, epicByIssueKey } = await collectIssueKeysForWorklog(jira, filters);
   const rows = [];
   const dateFrom = createDayStart(filters.dateFrom);
   const dateTo = createDayEnd(filters.dateTo);
-  const assigneeIds = new Set(Array.isArray(filters.assigneeAccountIds) ? filters.assigneeAccountIds.map((value) => String(value || "")) : []);
+  const selectedAssigneeIds = Array.isArray(filters.assigneeAccountIds)
+    ? filters.assigneeAccountIds.map((value) => String(value || "").trim()).filter(Boolean)
+    : [];
+  const selectedGroupIds = Array.isArray(filters.groupIds)
+    ? filters.groupIds.map((value) => String(value || "").trim()).filter(Boolean)
+    : [];
+  const groupLabelsById = filters.groupLabelsById && typeof filters.groupLabelsById === "object"
+    ? filters.groupLabelsById
+    : {};
+  const assigneeIds = new Set(selectedAssigneeIds);
+  const groupNamesByAccountId = new Map();
+  const hasAssigneeFilter = selectedAssigneeIds.length > 0 || selectedGroupIds.length > 0;
 
-  for (const issueKey of issueKeys) {
-    const issue = await fetchIssueDetails(jira, issueKey, ["summary", "timetracking", "worklog"]);
-    const worklogsPage = await jiraRequest(jira, `/rest/api/3/issue/${encodeURIComponent(issueKey)}/worklog`);
-    const worklogs = Array.isArray(worklogsPage?.worklogs) ? worklogsPage.worklogs : [];
+  if (selectedGroupIds.length > 0) {
+    const groupedMembers = await Promise.all(selectedGroupIds.map(async (groupId) => ({
+      groupName: String(groupLabelsById[groupId] || groupId || "").trim() || groupId,
+      members: await listJiraGroupMembers(jira, groupId),
+    })));
+    groupedMembers.forEach(({ groupName, members }) => {
+      members.forEach((member) => {
+        if (member.accountId) {
+          const accountId = String(member.accountId);
+          assigneeIds.add(accountId);
+          const currentNames = groupNamesByAccountId.get(accountId) || new Set();
+          currentNames.add(groupName);
+          groupNamesByAccountId.set(accountId, currentNames);
+        }
+      });
+    });
+  }
+
+  await mapWithConcurrency(issues, 6, async (issue) => {
+    const issueKey = String(issue?.key || "").trim();
+    if (!issueKey) {
+      return;
+    }
+    const worklogs = await fetchIssueWorklogsInRange(jira, issueKey, dateFrom, dateTo);
     for (const worklog of worklogs) {
       const startedAt = new Date(worklog.started || worklog.created);
       if (Number.isNaN(startedAt.getTime()) || startedAt < dateFrom || startedAt > dateTo) {
         continue;
       }
       const accountId = String(worklog?.author?.accountId || "");
-      if (assigneeIds.size > 0 && !assigneeIds.has(accountId)) {
+      if (hasAssigneeFilter && !assigneeIds.has(accountId)) {
         continue;
       }
       rows.push({
         epicKey: String(epicByIssueKey.get(issueKey) || ""),
         issueKey,
         issueTitle: String(issue?.fields?.summary || issueKey),
+        issueUrl: `${jira.baseUrl}/browse/${encodeURIComponent(issueKey)}`,
+        groupNames: [...(groupNamesByAccountId.get(accountId) || [])].sort((left, right) => left.localeCompare(right)),
         accountId,
         author: String(worklog?.author?.displayName || "Unknown"),
         startedAt: startedAt.toISOString(),
         secondsSpent: Number(worklog.timeSpentSeconds || 0),
       });
     }
-  }
+  });
 
-  return rows;
+  return rows.sort((left, right) => {
+    const issueComparison = String(left.issueKey || "").localeCompare(String(right.issueKey || ""));
+    if (issueComparison !== 0) {
+      return issueComparison;
+    }
+    const startedComparison = String(left.startedAt || "").localeCompare(String(right.startedAt || ""));
+    if (startedComparison !== 0) {
+      return startedComparison;
+    }
+    return String(left.author || "").localeCompare(String(right.author || ""));
+  });
 }
 
 function createDayStart(value) {

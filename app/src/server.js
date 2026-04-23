@@ -2432,10 +2432,18 @@ app.post("/api/jira/worklog/report", requireUser, requireWorklogView, async (req
     const issueKeys = Array.isArray(filters.issueKeys)
       ? filters.issueKeys.map((value) => String(value || "").trim()).filter(Boolean)
       : (filters.epicKey ? [String(filters.epicKey || "").trim()] : []);
+    const projectKeys = Array.isArray(filters.projectKeys)
+      ? filters.projectKeys.map((value) => String(value || "").trim()).filter(Boolean)
+      : [];
+    const groupIds = Array.isArray(filters.groupIds)
+      ? filters.groupIds.map((value) => String(value || "").trim()).filter(Boolean)
+      : [];
     await logAudit(req.user.id, "jira.worklog.report", "jira", {
       dateFrom: filters.dateFrom,
       dateTo: filters.dateTo,
       issueKeys,
+      projectKeys,
+      groupIds,
       rowCount: rows.length,
       viewMode: filters.viewMode || "issue-first",
     });
@@ -2450,7 +2458,7 @@ app.get("/api/jira/worklog/users", requireUser, requireWorklogView, async (req, 
     const users = await listJiraWorklogUsers(await getSettings(), String(req.query?.query || ""));
     json(res, { users });
   } catch (error) {
-    json(res, { error: error instanceof Error ? error.message : "Failed to load Jira users." }, 400);
+    json(res, { error: error instanceof Error ? error.message : "Failed to load Jira users or groups." }, 400);
   }
 });
 
