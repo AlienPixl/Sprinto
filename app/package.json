@@ -1,6 +1,8 @@
 {
   "name": "sprinto-app",
-  "version": "1.0.2",
+  "author": "Martin Janecek",
+  "version": "1.0.3",
+  "license": "SEE LICENSE IN LICENSE",
   "private": true,
   "type": "module",
   "scripts": {

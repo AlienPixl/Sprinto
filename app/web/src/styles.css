@@ -285,13 +285,23 @@ input[type="number"]::-webkit-inner-spin-button {
   letter-spacing: 0.02em;
 }
 
+.app-footer__legal,
 .app-footer__meta {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 0.55rem;
+}
+
+.app-footer__legal {
+  grid-column: 1;
+  justify-self: start;
+}
+
+.app-footer__meta {
   grid-column: 2;
   justify-content: center;
+  text-align: center;
 }
 
 .app-footer__status {
@@ -304,6 +314,10 @@ input[type="number"]::-webkit-inner-spin-button {
 .app-footer__brand {
   font-weight: 600;
   color: rgba(249, 243, 223, 0.84);
+}
+
+.app-footer__separator {
+  color: rgba(249, 243, 223, 0.42);
 }
 
 .app-footer__update {
@@ -353,6 +367,7 @@ input[type="number"]::-webkit-inner-spin-button {
     flex-wrap: wrap;
   }
 
+  .app-footer__legal,
   .app-footer__meta,
   .app-footer__status {
     justify-content: center;

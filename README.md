@@ -74,3 +74,19 @@ Public-facing documentation lives under `docs/`:
 - [Authentication And Recovery](docs/authentication-and-recovery.md)
 - [Jira Integrations](docs/jira-integrations.md)
 - [Releases](docs/releases.md)
+
+## License & Branding
+
+Sprinto is source-available under a custom license. You can use it internally, inspect
+the source, make private changes, and share it on a non-commercial basis.
+
+You may not sell Sprinto, monetize access to Sprinto, offer it as a paid hosted service,
+or present Sprinto as your own original product.
+
+If you share Sprinto or a public fork, you must preserve attribution to Martin Janecek.
+Modified public forks must also use different branding unless you have prior written
+permission.
+
+- [LICENSE](LICENSE)
+- [NOTICE](NOTICE)
+- [TRADEMARKS.md](TRADEMARKS.md)

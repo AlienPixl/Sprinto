@@ -1,0 +1,95 @@
+Sprinto Custom License 1.0
+
+Copyright (c) 2026 Martin Janecek
+All rights reserved.
+
+This license governs the Sprinto software and source code, including its associated
+documentation and official branding assets, except where a third-party component is
+distributed under its own license.
+
+1. Definitions
+
+"Software" means the Sprinto source code, compiled builds, release artifacts, and
+associated documentation distributed with this license.
+
+"You" means the individual or legal entity exercising rights under this license.
+
+"Official Branding" means the Sprinto name, logo, artwork, and any other identifiers
+described in TRADEMARKS.md.
+
+2. License Grant
+
+Subject to this license, you are granted a limited, non-exclusive, non-transferable,
+revocable license to:
+
+- use, run, copy, and evaluate the Software;
+- modify the Software for your own private or internal use;
+- share exact or modified copies of the Software on a non-commercial basis.
+
+For clarity, internal use by a commercial organization is allowed as long as the
+Software itself is not sold, sublicensed, or offered to third parties as a paid or
+revenue-generating product or service.
+
+3. Conditions
+
+If you copy, share, or distribute the Software, you must:
+
+- keep this LICENSE file, the NOTICE file, and all existing copyright and attribution
+  notices;
+- clearly credit Martin Janecek as the original author of Sprinto;
+- mark any modified version as changed from the original Sprinto project;
+- comply with TRADEMARKS.md for any use of the Sprinto name, logo, or branding.
+
+4. Restrictions
+
+You may not, without prior written permission from Martin Janecek:
+
+- sell, rent, lease, sublicense, or otherwise monetize the Software or access to it;
+- offer the Software as a paid, subscription, hosted, managed, white-label, OEM, or
+  similar service for third parties;
+- bundle the Software into a paid or revenue-generating product or service where the
+  Software or access to it is a material part of what is being sold;
+- represent or imply that you created the original Software;
+- represent or imply that a modified, redistributed, or hosted version is an official
+  Sprinto release;
+- remove, hide, or alter copyright, attribution, or license notices required by this
+  license;
+- use the Official Branding except as expressly allowed by TRADEMARKS.md.
+
+5. Attribution
+
+Any public copy, fork, release, or hosted instance of the Software must provide visible
+attribution that Sprinto was originally created by Martin Janecek.
+
+Any public modified version must also state that it is an unofficial modified version or
+fork of Sprinto.
+
+6. Branding And Trademarks
+
+No trademark rights are granted under this license. Rights to the Sprinto name, logo,
+and official branding are governed separately by TRADEMARKS.md.
+
+7. Termination
+
+This license terminates automatically if you violate any term of it. Upon termination,
+you must stop using and distributing the Software until you have cured the violation and,
+if applicable, obtained written permission to continue.
+
+8. Disclaimer Of Warranty
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR
+PURPOSE, TITLE, AND NON-INFRINGEMENT.
+
+9. Limitation Of Liability
+
+TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, MARTIN JANECEK SHALL NOT BE LIABLE
+FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR
+OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE OF OR
+OTHER DEALINGS IN THE SOFTWARE.
+
+10. Entire License
+
+This license and the accompanying NOTICE and TRADEMARKS.md files are the complete terms
+for using, sharing, and branding Sprinto unless Martin Janecek grants separate written
+permission.

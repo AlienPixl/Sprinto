@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { AdminPanel } from "./components/AdminPanel";
+import { AppFooter } from "./components/AppFooter";
 import { Dashboard } from "./components/Dashboard";
 import { LoginScreen } from "./components/LoginScreen";
 import { RoomView } from "./components/RoomView";
@@ -1088,42 +1089,14 @@ export function App() {
         ) : null}
       </main>
 
-      <footer className="app-footer">
-        <div className="app-footer__content">
-          <div className="app-footer__meta">
-            <span className="app-footer__brand">Sprinto by Martin Janeček</span>
-            <a
-              className="app-footer__link"
-              href="https://github.com/AlienPixl"
-              rel="noreferrer"
-              target="_blank"
-            >
-              GitHub
-            </a>
-            <span className="app-footer__copyright">© {copyrightLabel}</span>
-          </div>
-          {showFooterUpdateNotice ? (
-            <div className="app-footer__status">
-              {footerUpdateUrl ? (
-                <a
-                  className="app-footer__update"
-                  href={footerUpdateUrl}
-                  rel="noreferrer"
-                  target="_blank"
-                >
-                  New version {footerUpdateVersion} available
-                </a>
-              ) : (
-                <span className="app-footer__update">New version {footerUpdateVersion} available</span>
-              )}
-            </div>
-          ) : showFooterCurrentVersion ? (
-            <div className="app-footer__status">
-              <span className="app-footer__version">Current version {footerCurrentVersion}</span>
-            </div>
-          ) : null}
-        </div>
-      </footer>
+      <AppFooter
+        copyrightLabel={copyrightLabel}
+        footerCurrentVersion={footerCurrentVersion}
+        footerUpdateUrl={footerUpdateUrl}
+        footerUpdateVersion={footerUpdateVersion}
+        showFooterCurrentVersion={showFooterCurrentVersion}
+        showFooterUpdateNotice={showFooterUpdateNotice}
+      />
 
       {userSettingsOpen && user ? (
         <UserSettings

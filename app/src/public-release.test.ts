@@ -44,19 +44,29 @@ exclude:
   it("keeps only allowlisted tracked files and removes denied paths", () => {
     const files = collectPublicReleaseFiles(
       [
+        "LICENSE",
+        "NOTICE",
         "README.md",
+        "TRADEMARKS.md",
         "app/package.json",
         "app/src/server.js",
         ".ai-context/current_state.md",
         "wiki/Home.md",
       ],
       {
-        include: ["README.md", "app", ".ai-context"],
+        include: ["LICENSE", "NOTICE", "README.md", "TRADEMARKS.md", "app", ".ai-context"],
         exclude: [".ai-context", "wiki"],
       },
     );
 
-    expect(files).toEqual(["README.md", "app/package.json", "app/src/server.js"]);
+    expect(files).toEqual([
+      "LICENSE",
+      "NOTICE",
+      "README.md",
+      "TRADEMARKS.md",
+      "app/package.json",
+      "app/src/server.js",
+    ]);
   });
 
   it("keeps only public changelog files from the configured floor tag onward", () => {
