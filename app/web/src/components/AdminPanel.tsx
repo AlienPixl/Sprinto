@@ -2657,14 +2657,15 @@ export function AdminPanel({
                     <label>
                       <span>Default timer (seconds)</span>
                       <input
+                        disabled
                         min={1}
                         type="number"
                         value={settings.defaultTimerSeconds}
-                        onChange={(event) =>
-                          setSettings({ ...settings, defaultTimerSeconds: Number(event.target.value) || 1 })
-                        }
                       />
                     </label>
+                    <p className="settings-help settings-help--muted">
+                      Reserved for a future timed voting mode.
+                    </p>
                     <label>
                       <span>Default deck</span>
                       <select

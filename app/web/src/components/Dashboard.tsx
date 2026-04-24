@@ -8,12 +8,13 @@ const DEFAULT_ACTIVE_FILTERS: Filter[] = ["open", "voting", "revealed"];
 type DashboardProps = {
   rooms: RoomSummary[];
   decks: Deck[];
+  defaultDeckName?: string;
   onOpenRoom: (roomId: string) => void;
   onCreateRoom: (name: string, deckName: string) => Promise<void>;
   canCreateRoom: boolean;
 };
 
-export function Dashboard({ rooms, decks, onOpenRoom, onCreateRoom, canCreateRoom }: DashboardProps) {
+export function Dashboard({ rooms, decks, defaultDeckName = "", onOpenRoom, onCreateRoom, canCreateRoom }: DashboardProps) {
   const [name, setName] = useState("");
   const [deckName, setDeckName] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -22,7 +23,11 @@ export function Dashboard({ rooms, decks, onOpenRoom, onCreateRoom, canCreateRoo
   const deckMenuRef = useRef<HTMLDivElement | null>(null);
 
   const availableDecks = decks.length > 0 ? decks : [{ id: "fallback", name: "Fibonacci", values: ["1", "2", "3", "5", "8", "13", "21", "?"], isDefault: true, createdAt: new Date().toISOString() }];
-  const selectedDeckName = deckName || availableDecks[0].name;
+  const configuredDefaultDeckName =
+    availableDecks.find((deck) => deck.name === defaultDeckName)?.name ||
+    availableDecks.find((deck) => deck.isDefault)?.name ||
+    availableDecks[0].name;
+  const selectedDeckName = availableDecks.some((deck) => deck.name === deckName) ? deckName : configuredDefaultDeckName;
   const selectedDeck = availableDecks.find((deck) => deck.name === selectedDeckName) ?? availableDecks[0];
 
   const visibleRooms = useMemo(
@@ -68,7 +73,7 @@ export function Dashboard({ rooms, decks, onOpenRoom, onCreateRoom, canCreateRoo
 
     setSubmitting(true);
     try {
-      await onCreateRoom(name, deckName || availableDecks[0].name);
+      await onCreateRoom(name, selectedDeckName);
       setName("");
     } finally {
       setSubmitting(false);

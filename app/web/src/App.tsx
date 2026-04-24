@@ -1084,6 +1084,7 @@ export function App() {
         {view === "dashboard" ? (
           <Dashboard
             canCreateRoom={user.permissions.includes("create_room")}
+            defaultDeckName={effectiveSettings?.defaultDeck || ""}
             decks={decks}
             rooms={rooms}
             onOpenRoom={(roomId) => {
