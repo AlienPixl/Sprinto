@@ -20,7 +20,7 @@ Review `docker-compose.example.yml`, then rename it to `docker-compose.yml` befo
 
 ```bash
 cp docker-compose.example.yml docker-compose.yml
-cp .env.example .env
+cp default.env.example .env
 docker compose up --build
 ```
 
@@ -66,7 +66,7 @@ Each release ships:
 
 - a Linux `amd64` Docker image tarball
 - a `docker-compose.example.yml` deployment template
-- a release `.env.example` template
+- a release `default.env.example` template
 - release notes from `changelog/vX.Y.Z.md`
 
 ## Documentation

@@ -42,7 +42,7 @@ jobs:
           CHANGELOG_FILE="changelog/${RELEASE_TAG}.md"
           RELEASE_COMPOSE_TEMPLATE="docker-compose.example.yml"
           RELEASE_COMPOSE_FILE="./docker-image/docker-compose.example-${RELEASE_TAG}.yml"
-          RELEASE_ENV_EXAMPLE_FILE="./docker-image/.env.example"
+          RELEASE_ENV_EXAMPLE_FILE="./docker-image/default.env.example"
           if [ ! -f "$CHANGELOG_FILE" ]; then
             echo "Missing changelog file: $CHANGELOG_FILE" >&2
             exit 1
@@ -51,8 +51,8 @@ jobs:
             echo "Missing compose template: $RELEASE_COMPOSE_TEMPLATE" >&2
             exit 1
           fi
-          if [ ! -f ".env.example" ]; then
-            echo "Missing env template: .env.example" >&2
+          if [ ! -f "default.env.example" ]; then
+            echo "Missing env template: default.env.example" >&2
             exit 1
           fi
           echo "CHANGELOG_FILE=$CHANGELOG_FILE" >> "$GITHUB_ENV"
@@ -95,7 +95,7 @@ jobs:
 
       - name: Stage release env example
         run: |
-          cp .env.example "${RELEASE_ENV_EXAMPLE_FILE}"
+          cp default.env.example "${RELEASE_ENV_EXAMPLE_FILE}"
 
       - name: Verify GitHub CLI
         run: gh --version
