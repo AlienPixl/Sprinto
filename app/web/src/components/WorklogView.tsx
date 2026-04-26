@@ -1,24 +1,35 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { JiraAssignableUser, JiraWorklogGroupBy, JiraWorklogIssue, JiraWorklogReport, JiraWorklogRequest, JiraWorklogRow } from "../lib/types";
+import { JiraAssignableUser, JiraIssueLinkType, JiraWorklogGroupBy, JiraWorklogIssue, JiraWorklogReport, JiraWorklogRequest, JiraWorklogRow } from "../lib/types";
 
 type WorklogViewProps = {
   onLoadIssue: (issueKey: string) => Promise<JiraWorklogIssue>;
   onLoadIssues: (query?: string) => Promise<JiraWorklogIssue[]>;
+  onLoadLinkTypes?: () => Promise<JiraIssueLinkType[]>;
   onLoadReport: (payload: JiraWorklogRequest) => Promise<JiraWorklogReport>;
   onLoadUsers: (query?: string) => Promise<JiraAssignableUser[]>;
 };
 
-type WorklogChartType = "donut" | "pie" | "bar";
+type WorklogChartType = "donut" | "treemap";
+type WorklogSortDirection = "asc" | "desc";
+type WorklogSortColumn = JiraWorklogGroupBy | "time";
+
+type WorklogSortState = {
+  column: WorklogSortColumn;
+  direction: WorklogSortDirection;
+};
 
 type GroupedRow = {
   id: string;
   epic: string;
   epicMeta: string;
+  epicUrl: string;
   issue: string;
   issueMeta: string;
   issueUrl: string;
-  group: string;
-  groupMeta: string;
+  sourceIssue: string;
+  sourceIssueMeta: string;
+  sourceIssueUrl: string;
+  sourceLabel: string;
   user: string;
   userMeta: string;
   secondsSpent: number;
@@ -32,6 +43,14 @@ type GroupedBlock = {
   totalSeconds: number;
 };
 
+type WorklogChartDatum = {
+  label: string;
+  secondsSpent: number;
+  color: string;
+  title: string;
+  url: string;
+};
+
 type WorklogGrouping = {
   primary: JiraWorklogGroupBy;
   secondary: JiraWorklogGroupBy | "";
@@ -43,6 +62,8 @@ const DEFAULT_REQUEST: JiraWorklogRequest = {
   issueKeys: [],
   projectKeys: [],
   includeEpicChildren: true,
+  includeLinkedIssues: false,
+  linkedIssueTypeIds: [],
   assigneeAccountIds: [],
   groupIds: [],
   viewMode: "issue-first",
@@ -54,8 +75,12 @@ const CHART_COLORS = ["#f4a261", "#78c6a3", "#6ea8fe", "#f28482", "#e9c46a", "#c
 const GROUP_BY_LABELS: Record<JiraWorklogGroupBy, string> = {
   epic: "Epic",
   issue: "Issue",
-  group: "Group",
   user: "User",
+};
+
+const TABLE_COLUMN_LABELS: Record<WorklogSortColumn, string> = {
+  ...GROUP_BY_LABELS,
+  time: "Time",
 };
 
 function getWorklogScopeType(issue: JiraWorklogIssue) {
@@ -74,12 +99,15 @@ function getWorklogPrincipalLookupKey(value: string, scopeType: JiraAssignableUs
   return `${scopeType === "group" ? "group" : "user"}:${String(value || "").trim()}`;
 }
 
-export function WorklogView({ onLoadIssue: _onLoadIssue, onLoadIssues, onLoadReport, onLoadUsers }: WorklogViewProps) {
+export function WorklogView({ onLoadIssue: _onLoadIssue, onLoadIssues, onLoadLinkTypes = async () => [], onLoadReport, onLoadUsers }: WorklogViewProps) {
   const [request, setRequest] = useState<JiraWorklogRequest>(DEFAULT_REQUEST);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [report, setReport] = useState<JiraWorklogReport>({ rows: [] });
   const [chartType, setChartType] = useState<WorklogChartType>("donut");
+  const [activeChartLabel, setActiveChartLabel] = useState("");
+  const [tableExpanded, setTableExpanded] = useState(false);
+  const [sortState, setSortState] = useState<WorklogSortState>({ column: "issue", direction: "asc" });
   const [issueSearch, setIssueSearch] = useState("");
   const [issuePickerOpen, setIssuePickerOpen] = useState(false);
   const [issueOptions, setIssueOptions] = useState<JiraWorklogIssue[]>([]);
@@ -90,6 +118,11 @@ export function WorklogView({ onLoadIssue: _onLoadIssue, onLoadIssues, onLoadRep
   const [userOptions, setUserOptions] = useState<JiraAssignableUser[]>([]);
   const [userLookup, setUserLookup] = useState<Record<string, JiraAssignableUser>>({});
   const [usersLoading, setUsersLoading] = useState(false);
+  const [linkedSettingsOpen, setLinkedSettingsOpen] = useState(false);
+  const [linkTypes, setLinkTypes] = useState<JiraIssueLinkType[]>([]);
+  const [linkTypesLoading, setLinkTypesLoading] = useState(false);
+  const [linkTypesLoaded, setLinkTypesLoaded] = useState(false);
+  const [linkTypesError, setLinkTypesError] = useState("");
   const issuePickerRef = useRef<HTMLDivElement | null>(null);
   const userPickerRef = useRef<HTMLDivElement | null>(null);
 
@@ -184,6 +217,21 @@ export function WorklogView({ onLoadIssue: _onLoadIssue, onLoadIssues, onLoadRep
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
+  useEffect(() => {
+    if (!linkedSettingsOpen) {
+      return undefined;
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setLinkedSettingsOpen(false);
+      }
+    }
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [linkedSettingsOpen]);
+
   const selectedIssues = useMemo(
     () => [
       ...request.projectKeys.map((projectKey) => issueLookup[getWorklogScopeLookupKey(projectKey, "project")]).filter(Boolean),
@@ -202,11 +250,11 @@ export function WorklogView({ onLoadIssue: _onLoadIssue, onLoadIssues, onLoadRep
 
   const visibleRows = report.rows;
   const hasEpicData = visibleRows.some((row) => row.epicKey);
-  const hasGroupData = visibleRows.some((row) => Array.isArray(row.groupNames) && row.groupNames.length > 0);
+  const hasLinkedData = visibleRows.some((row) => row.linkSourceIssueKey);
   const grouping = useMemo(() => normalizeGrouping(request), [request]);
-  const tableColumns = useMemo(() => getTableColumns(grouping, hasEpicData, hasGroupData), [grouping, hasEpicData, hasGroupData]);
+  const tableColumns = useMemo(() => getTableColumns(grouping, hasEpicData), [grouping, hasEpicData]);
 
-  const groupedBlocks = useMemo(() => buildGroupedBlocks(visibleRows, grouping, tableColumns), [grouping, tableColumns, visibleRows]);
+  const groupedBlocks = useMemo(() => buildGroupedBlocks(visibleRows, grouping, tableColumns, sortState), [grouping, sortState, tableColumns, visibleRows]);
 
   const summary = useMemo(() => {
     const issueCount = new Set(visibleRows.map((row) => row.issueKey)).size;
@@ -220,6 +268,13 @@ export function WorklogView({ onLoadIssue: _onLoadIssue, onLoadIssues, onLoadRep
   }, [groupedBlocks.length, visibleRows]);
 
   const chartData = useMemo(() => buildChartData(visibleRows, grouping.primary), [grouping.primary, visibleRows]);
+
+  useEffect(() => {
+    if (activeChartLabel && !chartData.some((item) => item.label === activeChartLabel)) {
+      setActiveChartLabel("");
+    }
+  }, [activeChartLabel, chartData]);
+
   const selectedIssueScopeKeys = useMemo(
     () =>
       new Set([
@@ -247,29 +302,21 @@ export function WorklogView({ onLoadIssue: _onLoadIssue, onLoadIssues, onLoadRep
   const showUserPicker = userPickerOpen && (usersLoading || availableUserOptions.length > 0 || userSearch.trim().length > 0);
   const availablePrimaryGroups = getAvailableGroupByOptions();
   const availableSecondaryGroups = getAvailableSecondaryGroupByOptions(grouping.primary);
+  const summaryText = `${summary.issueCount} issues · ${summary.userCount} users · ${summary.totalEntries} entries · ${summary.blockCount} groups`;
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setLoading(true);
     setError("");
     try {
-      const groupLabelsById = Object.fromEntries(
-        request.groupIds
-          .map((groupId) => {
-            const group = userLookup[getWorklogPrincipalLookupKey(groupId, "group")];
-            const displayName = String(group?.displayName || "").trim();
-            return displayName ? [groupId, displayName] : null;
-          })
-          .filter((entry): entry is [string, string] => Boolean(entry))
-      );
       const nextReport = await onLoadReport({
         ...request,
-        groupLabelsById,
         viewMode: viewModeFromGroupBy(grouping.primary),
         primaryGroupBy: grouping.primary,
         secondaryGroupBy: grouping.secondary,
       });
       setReport(nextReport);
+      setTableExpanded(false);
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Failed to load worklog report.");
     } finally {
@@ -366,18 +413,53 @@ export function WorklogView({ onLoadIssue: _onLoadIssue, onLoadIssues, onLoadRep
     }));
   }
 
+  function openLinkedSettings() {
+    setLinkedSettingsOpen(true);
+    if (linkTypesLoaded || linkTypesLoading) {
+      return;
+    }
+    setLinkTypesLoading(true);
+    setLinkTypesError("");
+    void onLoadLinkTypes()
+      .then((nextLinkTypes) => {
+        setLinkTypes(nextLinkTypes);
+        setLinkTypesLoaded(true);
+      })
+      .catch((nextError) => {
+        setLinkTypes([]);
+        setLinkTypesError(nextError instanceof Error ? nextError.message : "Failed to load Jira issue link types.");
+      })
+      .finally(() => setLinkTypesLoading(false));
+  }
+
+  function toggleLinkedIssueType(linkTypeId: string) {
+    setRequest((current) => {
+      const selectedIds = new Set(current.linkedIssueTypeIds);
+      if (selectedIds.has(linkTypeId)) {
+        selectedIds.delete(linkTypeId);
+      } else {
+        selectedIds.add(linkTypeId);
+      }
+      return {
+        ...current,
+        linkedIssueTypeIds: [...selectedIds],
+      };
+    });
+  }
+
   function handleExportCsv() {
     if (groupedBlocks.length === 0) {
       return;
     }
 
-    const header = [...tableColumns.map((column) => GROUP_BY_LABELS[column]), "Time"];
+    const header = [...tableColumns.map((column) => GROUP_BY_LABELS[column]), ...(hasLinkedData ? ["Source"] : []), "Time"];
 
     const csvRows = groupedBlocks.flatMap((block, blockIndex) => {
       const rows = block.rows.map((row, rowIndex) => [
         ...tableColumns.map((column, columnIndex) =>
           csvValue(shouldRenderColumnValue(block.rows, rowIndex, columnIndex, tableColumns) ? getRowLabel(row, column) : "")
         ),
+        ...(hasLinkedData ? [csvValue(formatSourceLabel(row))] : []),
         csvValue(formatDuration(row.secondsSpent)),
       ].join(","));
 
@@ -387,6 +469,9 @@ export function WorklogView({ onLoadIssue: _onLoadIssue, onLoadIssues, onLoadRep
         }
         return csvValue("");
       });
+      if (hasLinkedData) {
+        subtotal.push(csvValue(""));
+      }
       rows.push([...subtotal, csvValue(formatDuration(block.totalSeconds))].join(","));
 
       if (blockIndex < groupedBlocks.length - 1) {
@@ -399,6 +484,7 @@ export function WorklogView({ onLoadIssue: _onLoadIssue, onLoadIssues, onLoadRep
     csvRows.push(
       [
         ...tableColumns.map((_, columnIndex) => csvValue(columnIndex === Math.max(tableColumns.length - 1, 0) ? "Celkem celkem" : "")),
+        ...(hasLinkedData ? [csvValue("")] : []),
         csvValue(formatDuration(visibleRows.reduce((sum, row) => sum + row.secondsSpent, 0))),
       ].join(",")
     );
@@ -571,10 +657,22 @@ export function WorklogView({ onLoadIssue: _onLoadIssue, onLoadIssues, onLoadRep
               <span>Chart</span>
               <select value={chartType} onChange={(event) => setChartType(event.target.value as WorklogChartType)}>
                 <option value="donut">Donut</option>
-                <option value="pie">Pie</option>
-                <option value="bar">Bar</option>
+                <option value="treemap">Treemap</option>
               </select>
             </label>
+
+            <div className="worklog-toolbar__field">
+              <span>Links</span>
+              <button
+                aria-label={`Linked issues ${request.includeLinkedIssues ? `${request.linkedIssueTypeIds.length} selected` : "off"}`}
+                className={`ghost-button worklog-link-settings-button ${request.includeLinkedIssues ? "is-active" : ""}`}
+                onClick={openLinkedSettings}
+                type="button"
+              >
+                <strong>Linked issues</strong>
+                <span>{request.includeLinkedIssues ? `${request.linkedIssueTypeIds.length} selected` : "Off"}</span>
+              </button>
+            </div>
           </div>
 
           <div className="worklog-toolbar__row worklog-toolbar__row--secondary">
@@ -644,19 +742,165 @@ export function WorklogView({ onLoadIssue: _onLoadIssue, onLoadIssues, onLoadRep
         </form>
 
         <div className="worklog-results">
-          <div className="worklog-results__toolbar">
-            <div className="worklog-results__stats">
-              <span>{summary.issueCount} issues · {summary.userCount} users · {summary.totalEntries} entries · {summary.blockCount} groups</span>
-            </div>
-          </div>
-
-          <WorklogGroupedTable blocks={groupedBlocks} columns={tableColumns} />
-
           <div className="worklog-visuals">
             <div className="worklog-chart-card">
-              <WorklogChart chartType={chartType} data={chartData} groupBy={grouping.primary} />
+              <div className="worklog-results__stats">
+                <span>{summaryText}</span>
+              </div>
+              <WorklogChart
+                chartType={chartType}
+                data={chartData}
+                groupBy={grouping.primary}
+                selectedLabel={activeChartLabel}
+                onSelectionChange={setActiveChartLabel}
+              />
             </div>
           </div>
+
+          <button
+            aria-expanded={tableExpanded}
+            aria-label={`${tableExpanded ? "Hide" : "Show"} worklog table, ${summary.totalEntries} entries`}
+            className="worklog-table-toggle"
+            disabled={groupedBlocks.length === 0}
+            onClick={() => setTableExpanded((current) => !current)}
+            type="button"
+          >
+            <span>{tableExpanded ? "Hide worklog table" : "Show worklog table"}</span>
+            <strong>{summary.totalEntries} entries</strong>
+          </button>
+
+          {tableExpanded ? (
+            <WorklogGroupedTable
+              activePrimaryLabel={activeChartLabel}
+              blocks={groupedBlocks}
+              columns={tableColumns}
+              onSortChange={setSortState}
+              showSourceColumn={hasLinkedData}
+              sortState={sortState}
+            />
+          ) : null}
+        </div>
+      </section>
+
+      {linkedSettingsOpen ? (
+        <LinkedIssuesModal
+          includeLinkedIssues={request.includeLinkedIssues}
+          linkTypes={linkTypes}
+          linkTypesError={linkTypesError}
+          linkTypesLoading={linkTypesLoading}
+          onClose={() => setLinkedSettingsOpen(false)}
+          onIncludeChange={(includeLinkedIssues) => setRequest((current) => ({ ...current, includeLinkedIssues }))}
+          onToggleLinkType={toggleLinkedIssueType}
+          selectedLinkTypeIds={request.linkedIssueTypeIds}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function LinkedIssuesModal({
+  includeLinkedIssues,
+  linkTypes,
+  linkTypesError,
+  linkTypesLoading,
+  onClose,
+  onIncludeChange,
+  onToggleLinkType,
+  selectedLinkTypeIds,
+}: {
+  includeLinkedIssues: boolean;
+  linkTypes: JiraIssueLinkType[];
+  linkTypesError: string;
+  linkTypesLoading: boolean;
+  onClose: () => void;
+  onIncludeChange: (includeLinkedIssues: boolean) => void;
+  onToggleLinkType: (linkTypeId: string) => void;
+  selectedLinkTypeIds: string[];
+}) {
+  const [search, setSearch] = useState("");
+  const selectedIds = new Set(selectedLinkTypeIds);
+  const normalizedSearch = search.trim().toLowerCase();
+  const visibleLinkTypes = normalizedSearch
+    ? linkTypes.filter((linkType) =>
+      [linkType.name, linkType.inward, linkType.outward]
+        .some((value) => String(value || "").toLowerCase().includes(normalizedSearch))
+    )
+    : linkTypes;
+
+  return (
+    <div className="worklog-modal-backdrop" role="presentation">
+      <section aria-modal="true" className="worklog-modal" role="dialog">
+        <div className="worklog-modal__header">
+          <div>
+            <h2>Linked issues</h2>
+            <span>{selectedIds.size} link types selected</span>
+          </div>
+          <button className="ghost-button worklog-modal__close" onClick={onClose} type="button">
+            Close
+          </button>
+        </div>
+
+        <div className="worklog-modal__controls">
+          <label className="settings-toggle worklog-modal__toggle">
+            <button
+              aria-label="Include linked issues"
+              aria-pressed={includeLinkedIssues}
+              className={`toggle-switch ${includeLinkedIssues ? "is-active" : ""}`}
+              onClick={() => {
+                if (includeLinkedIssues) {
+                  setSearch("");
+                }
+                onIncludeChange(!includeLinkedIssues);
+              }}
+              type="button"
+            >
+              <span className="toggle-switch__knob" />
+            </button>
+            <span>Include linked issues</span>
+          </label>
+
+          <label className="worklog-link-type-search">
+            <span>Search link types</span>
+            <input
+              disabled={!includeLinkedIssues}
+              placeholder="Find link type"
+              type="text"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+            />
+          </label>
+        </div>
+
+        <div className={`worklog-link-type-list ${includeLinkedIssues ? "" : "is-disabled"}`} aria-disabled={!includeLinkedIssues}>
+          {linkTypesLoading ? <div className="worklog-user-picker__empty">Loading link types...</div> : null}
+          {linkTypesError ? <div className="worklog-user-picker__empty">{linkTypesError}</div> : null}
+          {!linkTypesLoading && !linkTypesError && linkTypes.length === 0 ? <div className="worklog-user-picker__empty">No link types found</div> : null}
+          {!linkTypesLoading && !linkTypesError && linkTypes.length > 0 && visibleLinkTypes.length === 0 ? <div className="worklog-user-picker__empty">No matching link types</div> : null}
+          {visibleLinkTypes.map((linkType) => {
+            const selected = selectedIds.has(linkType.id);
+            const outwardLabel = linkType.outward || linkType.name;
+            const inwardLabel = linkType.inward && linkType.inward !== linkType.outward ? linkType.inward : linkType.name;
+            return (
+              <button
+                aria-label={`Link type ${linkType.name || linkType.id}: Issue ${outwardLabel} Issue${inwardLabel ? `, ${inwardLabel}` : ""}`}
+                aria-pressed={selected}
+                className={`worklog-link-type-row ${selected ? "is-selected" : ""}`}
+                disabled={!includeLinkedIssues}
+                key={linkType.id}
+                onClick={() => onToggleLinkType(linkType.id)}
+                type="button"
+              >
+                <span className="worklog-link-type-row__issue">Issue</span>
+                <span className="worklog-link-type-row__line">
+                  <span />
+                  <strong>{outwardLabel}</strong>
+                  <span />
+                </span>
+                <span className="worklog-link-type-row__issue">Issue</span>
+                <span className="worklog-link-type-row__meta">{inwardLabel}</span>
+              </button>
+            );
+          })}
         </div>
       </section>
     </div>
@@ -664,11 +908,19 @@ export function WorklogView({ onLoadIssue: _onLoadIssue, onLoadIssues, onLoadRep
 }
 
 function WorklogGroupedTable({
+  activePrimaryLabel,
   blocks,
   columns,
+  onSortChange,
+  showSourceColumn,
+  sortState,
 }: {
+  activePrimaryLabel: string;
   blocks: GroupedBlock[];
   columns: JiraWorklogGroupBy[];
+  onSortChange: (sortState: WorklogSortState) => void;
+  showSourceColumn: boolean;
+  sortState: WorklogSortState;
 }) {
   const totalSeconds = blocks.reduce((sum, block) => sum + block.totalSeconds, 0);
 
@@ -682,23 +934,31 @@ function WorklogGroupedTable({
         <thead>
           <tr>
             {columns.map((column) => (
-              <th key={column}>{GROUP_BY_LABELS[column]}</th>
+              <th key={column}>
+                <SortHeaderButton column={column} onSortChange={onSortChange} sortState={sortState} />
+              </th>
             ))}
-            <th>Time</th>
+            {showSourceColumn ? <th>Source</th> : null}
+            <th>
+              <SortHeaderButton column="time" onSortChange={onSortChange} sortState={sortState} />
+            </th>
           </tr>
         </thead>
         <tbody>
           {blocks.map((block) => (
             <WorklogGroupedTableBlock
+              activePrimaryLabel={activePrimaryLabel}
               block={block}
               columns={columns}
               key={block.id}
+              showSourceColumn={showSourceColumn}
             />
           ))}
           <tr className="worklog-sheet__grand-total">
             {columns.map((column, columnIndex) => (
               <td key={column}>{columnIndex === Math.max(columns.length - 1, 0) ? "Celkem" : ""}</td>
             ))}
+            {showSourceColumn ? <td /> : null}
             <td>{formatDuration(totalSeconds)}</td>
           </tr>
         </tbody>
@@ -708,35 +968,72 @@ function WorklogGroupedTable({
 }
 
 function WorklogGroupedTableBlock({
+  activePrimaryLabel,
   block,
   columns,
+  showSourceColumn,
 }: {
+  activePrimaryLabel: string;
   block: GroupedBlock;
   columns: JiraWorklogGroupBy[];
+  showSourceColumn: boolean;
 }) {
+  const isChartMatch = Boolean(activePrimaryLabel) && block.primaryLabel === activePrimaryLabel;
+
   return (
     <>
       {block.rows.map((row, rowIndex) => (
-        <tr key={row.id}>
+        <tr className={isChartMatch ? "worklog-sheet__row is-chart-match" : "worklog-sheet__row"} key={row.id}>
           {columns.map((column, columnIndex) => (
             <td key={`${row.id}-${column}`} title={getRowMeta(row, column)}>
               {shouldRenderColumnValue(block.rows, rowIndex, columnIndex, columns) ? renderRowValue(row, column) : ""}
             </td>
           ))}
+          {showSourceColumn ? <td>{renderSourceValue(row)}</td> : null}
           <td className="worklog-sheet__time">{formatDuration(row.secondsSpent)}</td>
         </tr>
       ))}
-      <tr className="worklog-sheet__subtotal">
+      <tr className={`worklog-sheet__subtotal ${isChartMatch ? "is-chart-match" : ""}`}>
         {columns.map((column, columnIndex) => (
           <td key={`${block.id}-${column}-subtotal`}>{columnIndex === Math.max(columns.length - 1, 0) ? "Celkem" : ""}</td>
         ))}
+        {showSourceColumn ? <td /> : null}
         <td className="worklog-sheet__time">{formatDuration(block.totalSeconds)}</td>
       </tr>
     </>
   );
 }
 
-function buildGroupedBlocks(rows: JiraWorklogRow[], grouping: WorklogGrouping, columns: JiraWorklogGroupBy[]): GroupedBlock[] {
+function SortHeaderButton({
+  column,
+  onSortChange,
+  sortState,
+}: {
+  column: WorklogSortColumn;
+  onSortChange: (sortState: WorklogSortState) => void;
+  sortState: WorklogSortState;
+}) {
+  const isActive = sortState.column === column;
+  const nextDirection: WorklogSortDirection = isActive && sortState.direction === "asc" ? "desc" : "asc";
+  const sortLabel = `${TABLE_COLUMN_LABELS[column]} ${nextDirection === "asc" ? "ascending" : "descending"}`;
+
+  return (
+    <button
+      aria-label={`Sort by ${sortLabel}`}
+      aria-sort={isActive ? (sortState.direction === "asc" ? "ascending" : "descending") : undefined}
+      className={`worklog-sort-button ${isActive ? "is-active" : ""}`}
+      onClick={() => onSortChange({ column, direction: nextDirection })}
+      type="button"
+    >
+      <span>{TABLE_COLUMN_LABELS[column]}</span>
+      <span aria-hidden="true" className="worklog-sort-button__icon">
+        {isActive ? (sortState.direction === "asc" ? "↑" : "↓") : "↕"}
+      </span>
+    </button>
+  );
+}
+
+function buildGroupedBlocks(rows: JiraWorklogRow[], grouping: WorklogGrouping, columns: JiraWorklogGroupBy[], sortState: WorklogSortState): GroupedBlock[] {
   const aggregatedRows = aggregateRows(rows);
   const groups = new Map<string, GroupedBlock>();
 
@@ -762,26 +1059,67 @@ function buildGroupedBlocks(rows: JiraWorklogRow[], grouping: WorklogGrouping, c
   return [...groups.values()]
     .map((block) => ({
       ...block,
-      rows: [...block.rows].sort((left, right) => compareRows(left, right, columns)),
+      rows: [...block.rows].sort((left, right) => compareRows(left, right, columns, sortState)),
     }))
-    .sort((left, right) => left.primaryLabel.localeCompare(right.primaryLabel));
+    .sort((left, right) => compareBlocks(left, right, sortState, grouping.primary));
 }
 
 function buildChartData(rows: JiraWorklogRow[], groupBy: JiraWorklogGroupBy) {
-  const groups = new Map<string, number>();
+  const groups = new Map<string, { secondsSpent: number; title: string; url: string }>();
 
   for (const row of rows) {
     const label = getWorklogRowGroupValue(row, groupBy);
-    groups.set(label, (groups.get(label) || 0) + row.secondsSpent);
+    const existing = groups.get(label);
+    const nextTitle = getWorklogChartGroupTitle(row, groupBy);
+    const nextUrl = getWorklogChartGroupUrl(row, groupBy);
+
+    if (existing) {
+      existing.secondsSpent += row.secondsSpent;
+      if (!existing.title && nextTitle) {
+        existing.title = nextTitle;
+      }
+      if (!existing.url && nextUrl) {
+        existing.url = nextUrl;
+      }
+      continue;
+    }
+
+    groups.set(label, {
+      secondsSpent: row.secondsSpent,
+      title: nextTitle,
+      url: nextUrl,
+    });
   }
 
   return [...groups.entries()]
-    .map(([label, secondsSpent], index) => ({
+    .map(([label, group], index) => ({
       label,
-      secondsSpent,
+      secondsSpent: group.secondsSpent,
       color: CHART_COLORS[index % CHART_COLORS.length],
+      title: group.title,
+      url: group.url,
     }))
     .sort((left, right) => right.secondsSpent - left.secondsSpent);
+}
+
+function getWorklogChartGroupTitle(row: JiraWorklogRow, groupBy: JiraWorklogGroupBy) {
+  if (groupBy === "epic") {
+    return row.epicTitle || "";
+  }
+  if (groupBy === "issue") {
+    return row.issueTitle || "";
+  }
+  return "";
+}
+
+function getWorklogChartGroupUrl(row: JiraWorklogRow, groupBy: JiraWorklogGroupBy) {
+  if (groupBy === "epic") {
+    return row.epicUrl || "";
+  }
+  if (groupBy === "issue") {
+    return row.issueUrl || "";
+  }
+  return "";
 }
 
 function normalizeGrouping(request: JiraWorklogRequest): WorklogGrouping {
@@ -795,7 +1133,7 @@ function normalizeGrouping(request: JiraWorklogRequest): WorklogGrouping {
 }
 
 function getAvailableGroupByOptions(): JiraWorklogGroupBy[] {
-  return ["epic", "issue", "user", "group"];
+  return ["epic", "issue", "user"];
 }
 
 function getAvailableSecondaryGroupByOptions(primary: JiraWorklogGroupBy): JiraWorklogGroupBy[] {
@@ -822,15 +1160,13 @@ function viewModeFromGroupBy(groupBy: JiraWorklogGroupBy): JiraWorklogRequest["v
   return "issue-first";
 }
 
-function getTableColumns(grouping: WorklogGrouping, hasEpicData: boolean, hasGroupData: boolean): JiraWorklogGroupBy[] {
-  const leadingEpic = hasEpicData && grouping.primary !== "epic" && grouping.secondary !== "epic" ? (["epic"] as JiraWorklogGroupBy[]) : [];
+function getTableColumns(grouping: WorklogGrouping, hasEpicData: boolean): JiraWorklogGroupBy[] {
   const availableDimensions: JiraWorklogGroupBy[] = [
-    ...(hasEpicData ? (["epic"] as JiraWorklogGroupBy[]) : []),
+    ...(hasEpicData || grouping.primary === "epic" || grouping.secondary === "epic" ? (["epic"] as JiraWorklogGroupBy[]) : []),
     "issue",
     "user",
-    ...(hasGroupData ? (["group"] as JiraWorklogGroupBy[]) : []),
   ];
-  return [...new Set([...leadingEpic, grouping.primary, ...(grouping.secondary ? [grouping.secondary] : []), ...availableDimensions])];
+  return [...new Set([grouping.primary, ...(grouping.secondary ? [grouping.secondary] : []), ...availableDimensions])];
 }
 
 function aggregateRows(rows: JiraWorklogRow[]): GroupedRow[] {
@@ -838,9 +1174,7 @@ function aggregateRows(rows: JiraWorklogRow[]): GroupedRow[] {
 
   for (const row of rows) {
     const epic = row.epicKey || "Without epic";
-    const groupNames = getWorklogGroupNames(row);
-    const group = groupNames.join(", ") || "Without group";
-    const key = [epic, row.issueKey, row.author, group].join("|");
+    const key = [epic, row.issueKey, row.author].join("|");
     const existing = aggregated.get(key);
 
     if (existing) {
@@ -851,12 +1185,15 @@ function aggregateRows(rows: JiraWorklogRow[]): GroupedRow[] {
     aggregated.set(key, {
       id: key,
       epic,
-      epicMeta: row.epicKey || "",
+      epicMeta: row.epicTitle || row.epicKey || "",
+      epicUrl: row.epicUrl || "",
       issue: row.issueKey,
       issueMeta: row.issueTitle,
       issueUrl: row.issueUrl,
-      group,
-      groupMeta: groupNames.join(", "),
+      sourceIssue: row.linkSourceIssueKey || "",
+      sourceIssueMeta: row.linkSourceIssueTitle || "",
+      sourceIssueUrl: row.linkSourceIssueUrl || "",
+      sourceLabel: row.linkLabel || row.linkTypeName || "",
       user: row.author,
       userMeta: row.accountId,
       secondsSpent: row.secondsSpent,
@@ -866,7 +1203,12 @@ function aggregateRows(rows: JiraWorklogRow[]): GroupedRow[] {
   return [...aggregated.values()];
 }
 
-function compareRows(left: GroupedRow, right: GroupedRow, columns: JiraWorklogGroupBy[]) {
+function compareRows(left: GroupedRow, right: GroupedRow, columns: JiraWorklogGroupBy[], sortState: WorklogSortState) {
+  const primary = compareRowsByColumn(left, right, sortState.column);
+  if (primary !== 0) {
+    return sortState.direction === "asc" ? primary : -primary;
+  }
+
   for (const column of columns) {
     const value = getRowLabel(left, column).localeCompare(getRowLabel(right, column));
     if (value !== 0) {
@@ -876,12 +1218,28 @@ function compareRows(left: GroupedRow, right: GroupedRow, columns: JiraWorklogGr
   return right.secondsSpent - left.secondsSpent;
 }
 
+function compareRowsByColumn(left: GroupedRow, right: GroupedRow, column: WorklogSortColumn) {
+  if (column === "time") {
+    return left.secondsSpent - right.secondsSpent;
+  }
+  return getRowLabel(left, column).localeCompare(getRowLabel(right, column));
+}
+
+function compareBlocks(left: GroupedBlock, right: GroupedBlock, sortState: WorklogSortState, primaryGroupBy: JiraWorklogGroupBy) {
+  if (sortState.column === "time") {
+    const value = left.totalSeconds - right.totalSeconds;
+    return sortState.direction === "asc" ? value : -value;
+  }
+  if (sortState.column === primaryGroupBy) {
+    const value = left.primaryLabel.localeCompare(right.primaryLabel);
+    return sortState.direction === "asc" ? value : -value;
+  }
+  return left.primaryLabel.localeCompare(right.primaryLabel);
+}
+
 function getRowLabel(row: GroupedRow, column: JiraWorklogGroupBy) {
   if (column === "epic") {
     return row.epic;
-  }
-  if (column === "group") {
-    return row.group;
   }
   if (column === "user") {
     return row.user;
@@ -893,9 +1251,6 @@ function getRowMeta(row: GroupedRow, column: JiraWorklogGroupBy) {
   if (column === "epic") {
     return row.epicMeta;
   }
-  if (column === "group") {
-    return row.groupMeta;
-  }
   if (column === "user") {
     return row.userMeta;
   }
@@ -904,6 +1259,13 @@ function getRowMeta(row: GroupedRow, column: JiraWorklogGroupBy) {
 
 function renderRowValue(row: GroupedRow, column: JiraWorklogGroupBy) {
   const label = getRowLabel(row, column);
+  if (column === "epic" && row.epicUrl) {
+    return (
+      <a className="worklog-sheet__link" href={row.epicUrl} rel="noreferrer" target="_blank">
+        {label}
+      </a>
+    );
+  }
   if (column === "issue" && row.issueUrl) {
     return (
       <a className="worklog-sheet__link" href={row.issueUrl} rel="noreferrer" target="_blank">
@@ -914,23 +1276,38 @@ function renderRowValue(row: GroupedRow, column: JiraWorklogGroupBy) {
   return label;
 }
 
+function renderSourceValue(row: GroupedRow) {
+  if (!row.sourceIssue) {
+    return <span className="worklog-source-pill">Direct</span>;
+  }
+
+  return (
+    <span className="worklog-source-link" title={formatSourceLabel(row)}>
+      <a className="worklog-sheet__link" href={row.sourceIssueUrl} rel="noreferrer" target="_blank">
+        {row.sourceIssue}
+      </a>
+      <span aria-hidden="true">→</span>
+      <span>{row.issue}</span>
+      <strong>{row.sourceLabel || "linked"}</strong>
+    </span>
+  );
+}
+
+function formatSourceLabel(row: GroupedRow) {
+  if (!row.sourceIssue) {
+    return "Direct";
+  }
+  return `${row.sourceIssue} -> ${row.issue}${row.sourceLabel ? ` · ${row.sourceLabel}` : ""}`;
+}
+
 function getWorklogRowGroupValue(row: JiraWorklogRow, groupBy: JiraWorklogGroupBy) {
   if (groupBy === "epic") {
     return row.epicKey || "Without epic";
-  }
-  if (groupBy === "group") {
-    return getWorklogGroupNames(row).join(", ") || "Without group";
   }
   if (groupBy === "user") {
     return row.author;
   }
   return row.issueKey;
-}
-
-function getWorklogGroupNames(row: JiraWorklogRow) {
-  return Array.isArray(row.groupNames)
-    ? row.groupNames.map((groupName) => String(groupName || "").trim()).filter(Boolean)
-    : [];
 }
 
 function shouldRenderColumnValue(rows: GroupedRow[], rowIndex: number, columnIndex: number, columns: JiraWorklogGroupBy[]) {
@@ -955,35 +1332,53 @@ function WorklogChart({
   chartType,
   data,
   groupBy,
+  onSelectionChange,
+  selectedLabel,
 }: {
   chartType: WorklogChartType;
-  data: Array<{ label: string; secondsSpent: number; color: string }>;
+  data: WorklogChartDatum[];
   groupBy: JiraWorklogGroupBy;
+  onSelectionChange: (updater: string) => void;
+  selectedLabel: string;
 }) {
-  const [activeLabel, setActiveLabel] = useState("");
-
   if (data.length === 0) {
     return <div className="worklog-chart-empty">No chart data</div>;
   }
 
   const totalSeconds = data.reduce((sum, item) => sum + item.secondsSpent, 0);
-  const activeItem = data.find((item) => item.label === activeLabel) || null;
+  const activeItem = data.find((item) => item.label === selectedLabel) || null;
 
   return (
     <div className={`worklog-chart worklog-chart--${chartType}`}>
       <div className="worklog-chart__visual">
         <div className={`worklog-chart__info ${activeItem ? "is-active" : ""}`}>
           <strong>{activeItem ? activeItem.label : `${GROUP_BY_LABELS[groupBy]} split`}</strong>
+          {activeItem?.title ? (
+            <div className="worklog-chart__detail">
+              <span className="worklog-chart__detail-text" title={activeItem.title}>{activeItem.title}</span>
+              {activeItem.url ? (
+                <a
+                  aria-label={`Open ${activeItem.label} in Jira`}
+                  className="worklog-chart__detail-link"
+                  href={activeItem.url}
+                  rel="noreferrer"
+                  target="_blank"
+                >
+                  <ExternalLinkIcon />
+                </a>
+              ) : null}
+            </div>
+          ) : null}
           <span>{activeItem ? `${formatDuration(activeItem.secondsSpent)} • ${formatShare(activeItem.secondsSpent, totalSeconds)}` : `${formatDuration(totalSeconds)} total`}</span>
         </div>
-        {chartType === "bar" ? (
-          <WorklogBarChart activeLabel={activeLabel} data={data} />
+        {chartType === "treemap" ? (
+          <WorklogTreemap activeLabel={selectedLabel} data={data} onSelect={onSelectionChange} totalSeconds={totalSeconds} />
         ) : (
           <WorklogPieChart
             activeItem={activeItem}
-            activeLabel={activeLabel}
-            cutout={chartType === "donut" ? 56 : 0}
+            activeLabel={selectedLabel}
             data={data}
+            onSelect={onSelectionChange}
             totalSeconds={totalSeconds}
           />
         )}
@@ -991,13 +1386,15 @@ function WorklogChart({
       <div className="worklog-chart-legend">
         {data.map((item) => (
           <button
-            className={`worklog-chart-legend__item ${activeLabel === item.label ? "is-active" : ""} ${activeLabel && activeLabel !== item.label ? "is-muted" : ""}`}
+            aria-pressed={selectedLabel === item.label}
+            aria-label={`Focus ${item.label} in chart and table`}
+            className={`worklog-chart-legend__item ${selectedLabel === item.label ? "is-active" : ""} ${selectedLabel && selectedLabel !== item.label ? "is-muted" : ""}`}
             key={item.label}
-            onClick={() => setActiveLabel((current) => (current === item.label ? "" : item.label))}
+            onClick={() => onSelectionChange(selectedLabel === item.label ? "" : item.label)}
             type="button"
           >
             <span className="worklog-chart-legend__swatch" style={{ backgroundColor: item.color }} />
-            <div>
+            <div className="worklog-chart-legend__content">
               <strong>{item.label}</strong>
               <span>{formatDuration(item.secondsSpent)} • {formatShare(item.secondsSpent, totalSeconds)}</span>
             </div>
@@ -1008,17 +1405,27 @@ function WorklogChart({
   );
 }
 
+function ExternalLinkIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M14 5h5v5" />
+      <path d="M10 14 19 5" />
+      <path d="M19 14v4a1 1 0 0 1-1 1h-12a1 1 0 0 1-1-1v-12a1 1 0 0 1 1-1h4" />
+    </svg>
+  );
+}
+
 function WorklogPieChart({
   activeItem,
   activeLabel,
-  cutout,
   data,
+  onSelect,
   totalSeconds,
 }: {
-  activeItem: { label: string; secondsSpent: number; color: string } | null;
+  activeItem: WorklogChartDatum | null;
   activeLabel: string;
-  cutout: number;
-  data: Array<{ label: string; secondsSpent: number; color: string }>;
+  data: WorklogChartDatum[];
+  onSelect: (label: string) => void;
   totalSeconds: number;
 }) {
   const total = data.reduce((sum, item) => sum + item.secondsSpent, 0);
@@ -1026,41 +1433,36 @@ function WorklogPieChart({
 
   const segments = data.length === 1
     ? [
-      cutout > 0 ? (
-        <circle
-          className={activeLabel === data[0].label ? "is-active" : activeLabel ? "is-muted" : ""}
-          cx="100"
-          cy="100"
-          fill="none"
-          key={data[0].label}
-          r="84"
-          stroke={data[0].color}
-          strokeWidth="28"
-        />
-      ) : (
-        <circle
-          className={activeLabel === data[0].label ? "is-active" : activeLabel ? "is-muted" : ""}
-          cx="100"
-          cy="100"
-          fill={data[0].color}
-          key={data[0].label}
-          r="84"
-        />
-      ),
+      <circle
+        aria-label={`Focus ${data[0].label} in chart and table`}
+        className={activeLabel === data[0].label ? "is-active" : activeLabel ? "is-muted" : ""}
+        cx="100"
+        cy="100"
+        fill="none"
+        key={data[0].label}
+        onClick={() => onSelect(activeLabel === data[0].label ? "" : data[0].label)}
+        r="84"
+        role="button"
+        stroke={data[0].color}
+        strokeWidth="28"
+        tabIndex={0}
+      />,
     ]
     : data.map((item) => {
       const sweep = (item.secondsSpent / total) * 360;
-      const path = cutout > 0
-        ? describeArc(100, 100, 84, currentAngle, currentAngle + sweep)
-        : describeWedge(100, 100, 84, currentAngle, currentAngle + sweep);
+      const path = describeArc(100, 100, 84, currentAngle, currentAngle + sweep);
       const segment = (
         <path
+          aria-label={`Focus ${item.label} in chart and table`}
           className={activeLabel === item.label ? "is-active" : activeLabel ? "is-muted" : ""}
           d={path}
-          fill={cutout > 0 ? "none" : item.color}
+          fill="none"
           key={item.label}
+          onClick={() => onSelect(activeLabel === item.label ? "" : item.label)}
+          role="button"
           stroke={item.color}
-          strokeWidth={cutout > 0 ? 28 : 0}
+          strokeWidth={28}
+          tabIndex={0}
         />
       );
       currentAngle += sweep;
@@ -1069,47 +1471,116 @@ function WorklogPieChart({
 
   return (
     <svg aria-label="Worklog chart" className="worklog-pie-chart" viewBox="0 0 200 200">
-      {cutout === 0 ? <circle cx="100" cy="100" fill="rgba(249, 243, 223, 0.04)" r="84" /> : null}
       {segments}
-      {cutout > 0 ? (
-        <>
-          <circle className="worklog-pie-chart__center" cx="100" cy="100" r={cutout} />
-          <text className="worklog-pie-chart__total" textAnchor="middle" x="100" y="96">
-            {activeItem ? formatDuration(activeItem.secondsSpent) : formatDuration(total)}
-          </text>
-          <text className="worklog-pie-chart__caption" textAnchor="middle" x="100" y="116">
-            {activeItem ? `${activeItem.label} • ${formatShare(activeItem.secondsSpent, totalSeconds)}` : totalSeconds ? "Share of time" : ""}
-          </text>
-        </>
-      ) : null}
+      <circle className="worklog-pie-chart__center" cx="100" cy="100" r={56} />
+      <text className="worklog-pie-chart__total" textAnchor="middle" x="100" y="96">
+        {activeItem ? formatDuration(activeItem.secondsSpent) : formatDuration(total)}
+      </text>
+      <text className="worklog-pie-chart__caption" textAnchor="middle" x="100" y="116">
+        {activeItem ? `${activeItem.label} • ${formatShare(activeItem.secondsSpent, totalSeconds)}` : totalSeconds ? "Share of time" : ""}
+      </text>
     </svg>
   );
 }
 
-function WorklogBarChart({
+function WorklogTreemap({
   activeLabel,
   data,
+  onSelect,
+  totalSeconds,
 }: {
   activeLabel: string;
-  data: Array<{ label: string; secondsSpent: number; color: string }>;
+  data: WorklogChartDatum[];
+  onSelect: (label: string) => void;
+  totalSeconds: number;
 }) {
-  const max = Math.max(...data.map((item) => item.secondsSpent), 1);
+  const tiles = getTreemapTiles(data, totalSeconds);
 
   return (
-    <div className="worklog-bar-chart">
-      {data.map((item) => (
-        <div className={`worklog-bar-chart__row ${activeLabel === item.label ? "is-active" : activeLabel && activeLabel !== item.label ? "is-muted" : ""}`} key={item.label}>
-          <div className="worklog-bar-chart__label">
-            <strong>{item.label}</strong>
-            <span>{formatDuration(item.secondsSpent)}</span>
-          </div>
-          <div className="worklog-bar-chart__track">
-            <div className="worklog-bar-chart__fill" style={{ backgroundColor: item.color, width: `${(item.secondsSpent / max) * 100}%` }} />
-          </div>
-        </div>
+    <div className="worklog-treemap" role="img" aria-label="Worklog share treemap">
+      {tiles.map((tile) => (
+        <button
+          className={`worklog-treemap__tile ${activeLabel === tile.item.label ? "is-active" : activeLabel && activeLabel !== tile.item.label ? "is-muted" : ""}`}
+          key={tile.item.label}
+          onClick={() => onSelect(activeLabel === tile.item.label ? "" : tile.item.label)}
+          style={{
+            backgroundColor: tile.item.color,
+            height: `${tile.height}%`,
+            left: `${tile.x}%`,
+            top: `${tile.y}%`,
+            width: `${tile.width}%`,
+          }}
+          title={`${tile.item.label} · ${formatDuration(tile.item.secondsSpent)} · ${formatShare(tile.item.secondsSpent, totalSeconds)}`}
+          type="button"
+        >
+          <span>{tile.item.label}</span>
+          <strong>{formatShare(tile.item.secondsSpent, totalSeconds)}</strong>
+        </button>
       ))}
     </div>
   );
+}
+
+type WorklogTreemapItem = WorklogChartDatum;
+type WorklogTreemapTile = {
+  item: WorklogTreemapItem;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+function getTreemapTiles(data: WorklogTreemapItem[], totalSeconds: number): WorklogTreemapTile[] {
+  const items = data.filter((item) => item.secondsSpent > 0);
+  const total = totalSeconds || items.reduce((sum, item) => sum + item.secondsSpent, 0);
+
+  if (items.length === 0 || total <= 0) {
+    return [];
+  }
+
+  return layoutTreemapItems(items, total, { x: 0, y: 0, width: 100, height: 100 });
+}
+
+function layoutTreemapItems(
+  items: WorklogTreemapItem[],
+  totalSeconds: number,
+  rect: { x: number; y: number; width: number; height: number }
+): WorklogTreemapTile[] {
+  if (items.length === 0) {
+    return [];
+  }
+
+  if (items.length === 1) {
+    return [{ item: items[0], ...rect }];
+  }
+
+  const [first, ...rest] = items;
+  const firstShare = first.secondsSpent / totalSeconds;
+  const restTotal = totalSeconds - first.secondsSpent;
+
+  if (rect.width >= rect.height) {
+    const firstWidth = rect.width * firstShare;
+    return [
+      { item: first, x: rect.x, y: rect.y, width: firstWidth, height: rect.height },
+      ...layoutTreemapItems(rest, restTotal, {
+        x: rect.x + firstWidth,
+        y: rect.y,
+        width: rect.width - firstWidth,
+        height: rect.height,
+      }),
+    ];
+  }
+
+  const firstHeight = rect.height * firstShare;
+  return [
+    { item: first, x: rect.x, y: rect.y, width: rect.width, height: firstHeight },
+    ...layoutTreemapItems(rest, restTotal, {
+      x: rect.x,
+      y: rect.y + firstHeight,
+      width: rect.width,
+      height: rect.height - firstHeight,
+    }),
+  ];
 }
 
 function formatDuration(totalSeconds: number) {
@@ -1146,18 +1617,6 @@ function describeArc(centerX: number, centerY: number, radius: number, startAngl
   const end = polarToCartesian(centerX, centerY, radius, startAngle);
   const largeArcFlag = endAngle - startAngle <= 180 ? "0" : "1";
   return ["M", start.x, start.y, "A", radius, radius, 0, largeArcFlag, 0, end.x, end.y].join(" ");
-}
-
-function describeWedge(centerX: number, centerY: number, radius: number, startAngle: number, endAngle: number) {
-  const start = polarToCartesian(centerX, centerY, radius, endAngle);
-  const end = polarToCartesian(centerX, centerY, radius, startAngle);
-  const largeArcFlag = endAngle - startAngle <= 180 ? "0" : "1";
-  return [
-    "M", centerX, centerY,
-    "L", start.x, start.y,
-    "A", radius, radius, 0, largeArcFlag, 0, end.x, end.y,
-    "Z",
-  ].join(" ");
 }
 
 function csvValue(value: string) {

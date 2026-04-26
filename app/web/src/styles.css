@@ -4277,6 +4277,7 @@ html[data-theme="timero"] .admin-role-mapping-divider {
     minmax(220px, 1.2fr)
     minmax(140px, 0.82fr)
     minmax(140px, 0.82fr)
+    minmax(132px, 0.82fr)
     minmax(132px, 0.82fr);
 }
 
@@ -4301,8 +4302,7 @@ html[data-theme="timero"] .admin-role-mapping-divider {
   flex-wrap: wrap;
 }
 
-.worklog-chart-legend__item span,
-.worklog-bar-chart__label span {
+.worklog-chart-legend__item span {
   color: rgba(249, 243, 223, 0.62);
   line-height: 1.4;
   font-size: 0.78rem;
@@ -4538,6 +4538,7 @@ html[data-theme="timero"] .admin-role-mapping-divider {
 .worklog-results__stats {
   display: grid;
   gap: 0.05rem;
+  margin-bottom: 0.55rem;
 }
 
 .worklog-results__stats strong {
@@ -4549,15 +4550,245 @@ html[data-theme="timero"] .admin-role-mapping-divider {
   font-size: 0.78rem;
 }
 
+.worklog-table-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  min-height: 3rem;
+  padding: 0.65rem 0.9rem;
+  border: 1px solid rgba(249, 243, 223, 0.1);
+  border-radius: 12px;
+  background: rgba(249, 243, 223, 0.035);
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.worklog-table-toggle:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.worklog-table-toggle span {
+  font-weight: 700;
+}
+
+.worklog-table-toggle strong {
+  color: rgba(249, 243, 223, 0.62);
+  font-size: 0.78rem;
+}
+
 .worklog-export-button {
   border: 1px solid rgba(249, 243, 223, 0.12);
   min-width: 112px;
   justify-content: center;
 }
 
+.worklog-link-settings-button {
+  display: grid;
+  gap: 0.05rem;
+  min-height: 2.45rem;
+  align-content: center;
+  justify-content: center;
+  border: 1px solid rgba(249, 243, 223, 0.12);
+}
+
+.worklog-link-settings-button strong {
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
+.worklog-link-settings-button span {
+  color: rgba(249, 243, 223, 0.62);
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.worklog-link-settings-button.is-active {
+  border-color: rgba(120, 198, 163, 0.42);
+  background: rgba(120, 198, 163, 0.12);
+}
+
+.worklog-link-settings-button.is-active span {
+  color: rgba(120, 198, 163, 0.9);
+}
+
+.worklog-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgba(2, 10, 8, 0.72);
+}
+
+.worklog-modal {
+  width: min(760px, 100%);
+  height: min(720px, calc(100vh - 2rem));
+  max-height: min(720px, calc(100vh - 2rem));
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 1rem;
+  overflow: hidden;
+  border: 1px solid rgba(249, 243, 223, 0.14);
+  border-radius: 12px;
+  background: rgba(7, 23, 20, 0.98);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.48);
+  padding: 1rem;
+}
+
+.worklog-modal__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.worklog-modal__header h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.worklog-modal__header span {
+  color: rgba(249, 243, 223, 0.62);
+  font-size: 0.78rem;
+}
+
+.worklog-modal__close {
+  border: 1px solid rgba(249, 243, 223, 0.12);
+}
+
+.worklog-modal__controls {
+  display: grid;
+  grid-template-columns: minmax(0, max-content) minmax(0, 1fr);
+  grid-template-rows: auto minmax(48px, auto);
+  column-gap: 1rem;
+  row-gap: 0.3rem;
+  justify-content: stretch;
+}
+
+.worklog-modal__toggle {
+  grid-column: 1;
+  grid-row: 2;
+  align-self: center;
+}
+
+.worklog-link-type-search {
+  display: grid;
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  grid-template-rows: auto minmax(48px, auto);
+  gap: 0.3rem;
+  justify-self: end;
+  width: min(100%, 38rem);
+}
+
+.worklog-link-type-search input {
+  width: 100%;
+  max-width: none;
+}
+
+.worklog-link-type-search span {
+  color: rgba(249, 243, 223, 0.6);
+  font-size: 0.72rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.worklog-link-type-search input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.worklog-link-type-list {
+  display: grid;
+  align-content: start;
+  gap: 0.45rem;
+  min-height: 0;
+  height: 100%;
+  overflow: auto;
+  padding-right: 0;
+  scrollbar-gutter: stable;
+}
+
+.worklog-link-type-list.is-disabled .worklog-link-type-row {
+  opacity: 0.58;
+}
+
+.worklog-link-type-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(4.5rem, 0.42fr) minmax(12rem, 1fr) minmax(4.5rem, 0.42fr) minmax(7rem, 0.55fr);
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.65rem 0.7rem;
+  border: 1px solid rgba(249, 243, 223, 0.1);
+  border-radius: 10px;
+  background: rgba(249, 243, 223, 0.035);
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.worklog-link-type-row:disabled {
+  cursor: not-allowed;
+}
+
+.worklog-link-type-row.is-selected {
+  border-color: rgba(120, 198, 163, 0.48);
+  background: rgba(120, 198, 163, 0.12);
+}
+
+.worklog-link-type-row__issue {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2rem;
+  border: 1px solid rgba(249, 243, 223, 0.12);
+  border-radius: 8px;
+  color: rgba(249, 243, 223, 0.78);
+  font-size: 0.78rem;
+}
+
+.worklog-link-type-row__line {
+  display: grid;
+  grid-template-columns: minmax(1.4rem, 1fr) auto minmax(1.4rem, 1fr);
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.worklog-link-type-row__line span {
+  height: 1px;
+  background: rgba(244, 162, 97, 0.58);
+}
+
+.worklog-link-type-row__line strong,
+.worklog-link-type-row__meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.worklog-link-type-row__line strong {
+  color: rgba(249, 243, 223, 0.9);
+  font-size: 0.82rem;
+}
+
+.worklog-link-type-row__meta {
+  color: rgba(249, 243, 223, 0.58);
+  font-size: 0.76rem;
+}
+
 .worklog-table__cell strong,
-.worklog-chart-legend__item strong,
-.worklog-bar-chart__label strong {
+.worklog-chart-legend__item strong {
   overflow-wrap: anywhere;
 }
 
@@ -4592,6 +4823,23 @@ html[data-theme="timero"] .admin-role-mapping-divider {
   color: rgba(249, 243, 223, 0.9);
 }
 
+.worklog-sheet__row.is-chart-match td {
+  background: rgba(244, 162, 97, 0.08);
+}
+
+.worklog-sheet__row.is-chart-match td:first-child {
+  box-shadow: inset 3px 0 0 rgba(244, 162, 97, 0.72);
+}
+
+.worklog-sheet__subtotal.is-chart-match td {
+  background: rgba(244, 162, 97, 0.14);
+}
+
+.worklog-sheet__row.is-chart-match .worklog-sheet__link,
+.worklog-sheet__subtotal.is-chart-match td:last-child {
+  font-weight: 700;
+}
+
 .worklog-sheet__table th {
   text-align: left;
   font-size: 0.68rem;
@@ -4599,6 +4847,36 @@ html[data-theme="timero"] .admin-role-mapping-divider {
   text-transform: uppercase;
   color: rgba(249, 243, 223, 0.56);
   background: rgba(249, 243, 223, 0.04);
+}
+
+.worklog-sort-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-height: 1.45rem;
+  gap: 0.4rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  letter-spacing: inherit;
+  text-align: left;
+  text-transform: inherit;
+}
+
+.worklog-sort-button:hover,
+.worklog-sort-button.is-active {
+  color: rgba(249, 243, 223, 0.92);
+}
+
+.worklog-sort-button__icon {
+  flex: 0 0 auto;
+  color: rgba(244, 162, 97, 0.78);
+  font-size: 0.78rem;
+  line-height: 1;
 }
 
 .worklog-sheet__link {
@@ -4615,6 +4893,43 @@ html[data-theme="timero"] .admin-role-mapping-divider {
 .worklog-sheet__link:hover {
   color: rgba(249, 243, 223, 1);
   text-decoration-color: rgba(244, 162, 97, 0.9);
+}
+
+.worklog-source-pill,
+.worklog-source-link {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  min-height: 1.45rem;
+  gap: 0.35rem;
+  font-size: 0.78rem;
+}
+
+.worklog-source-pill {
+  color: rgba(249, 243, 223, 0.52);
+}
+
+.worklog-source-link {
+  color: rgba(249, 243, 223, 0.74);
+}
+
+.worklog-source-link .worklog-sheet__link {
+  display: inline;
+  max-width: 6rem;
+}
+
+.worklog-source-link span,
+.worklog-source-link strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.worklog-source-link strong {
+  color: rgba(244, 162, 97, 0.82);
+  font-size: 0.72rem;
+  font-weight: 600;
 }
 
 .worklog-sheet__time {
@@ -4639,17 +4954,21 @@ html[data-theme="timero"] .admin-role-mapping-divider {
   align-items: center;
   grid-template-columns: minmax(240px, 1fr) minmax(220px, 320px);
   justify-content: center;
+  min-height: 240px;
+  max-height: min(330px, calc(100vh - 380px));
 }
 
 .worklog-chart--donut,
-.worklog-chart--pie {
+.worklog-chart--treemap {
   justify-items: stretch;
 }
 
 .worklog-chart__visual {
   display: grid;
+  align-content: center;
   justify-items: center;
   gap: 0.75rem;
+  min-height: 200px;
 }
 
 .worklog-chart__info {
@@ -4674,6 +4993,48 @@ html[data-theme="timero"] .admin-role-mapping-divider {
   text-align: center;
 }
 
+.worklog-chart__detail {
+  max-width: min(100%, 24rem);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.worklog-chart__detail-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.75rem;
+  color: rgba(249, 243, 223, 0.76);
+  text-align: center;
+}
+
+.worklog-chart__detail-link {
+  width: 1.55rem;
+  height: 1.55rem;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1px solid rgba(244, 162, 97, 0.24);
+  color: rgba(244, 162, 97, 0.9);
+  background: rgba(244, 162, 97, 0.08);
+}
+
+.worklog-chart__detail-link:hover {
+  border-color: rgba(244, 162, 97, 0.42);
+  background: rgba(244, 162, 97, 0.14);
+}
+
+.worklog-chart__detail-link svg {
+  width: 0.8rem;
+  height: 0.8rem;
+}
+
 .worklog-chart__info span {
   font-size: 0.76rem;
   color: rgba(249, 243, 223, 0.7);
@@ -4690,6 +5051,11 @@ html[data-theme="timero"] .admin-role-mapping-divider {
 .worklog-pie-chart path,
 .worklog-pie-chart circle {
   transition: opacity 90ms linear;
+}
+
+.worklog-pie-chart path[role="button"],
+.worklog-pie-chart circle[role="button"] {
+  cursor: pointer;
 }
 
 .worklog-pie-chart .is-active {
@@ -4718,9 +5084,13 @@ html[data-theme="timero"] .admin-role-mapping-divider {
 
 .worklog-chart-legend {
   display: grid;
+  align-content: start;
   gap: 0.45rem;
   width: min(100%, 320px);
+  max-height: min(290px, calc(100vh - 420px));
   margin: 0;
+  overflow: auto;
+  padding-right: 0.2rem;
 }
 
 .worklog-chart-legend__item {
@@ -4739,6 +5109,26 @@ html[data-theme="timero"] .admin-role-mapping-divider {
   cursor: pointer;
 }
 
+.worklog-chart-legend__content {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.worklog-chart-legend__content strong,
+.worklog-chart-legend__content span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.worklog-chart-legend__content span {
+  justify-self: end;
+}
+
 .worklog-chart-legend__item.is-active {
   border-color: rgba(244, 162, 97, 0.28);
   background: rgba(244, 162, 97, 0.06);
@@ -4755,40 +5145,56 @@ html[data-theme="timero"] .admin-role-mapping-divider {
   display: inline-block;
 }
 
-.worklog-bar-chart {
-  display: grid;
-  gap: 0.55rem;
-  width: min(100%, 720px);
+.worklog-treemap {
+  position: relative;
+  width: min(100%, 460px);
+  height: 200px;
   margin: 0 auto;
-}
-
-.worklog-bar-chart__row {
-  display: grid;
-  gap: 0.35rem;
-  transition: opacity 90ms linear;
-}
-
-.worklog-bar-chart__row.is-muted {
-  opacity: 0.48;
-}
-
-.worklog-bar-chart__label {
-  display: flex;
-  justify-content: space-between;
-  gap: 0.75rem;
-}
-
-.worklog-bar-chart__track {
-  height: 10px;
-  border-radius: 999px;
-  background: rgba(249, 243, 223, 0.08);
   overflow: hidden;
+  border-radius: 10px;
+  border: 1px solid rgba(249, 243, 223, 0.08);
+  background: rgba(249, 243, 223, 0.035);
 }
 
-.worklog-bar-chart__fill {
-  height: 100%;
-  border-radius: inherit;
-  transition: width 220ms ease, filter 220ms ease, opacity 220ms ease;
+.worklog-treemap__tile {
+  position: absolute;
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  border-radius: 0;
+  color: #fff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.68rem;
+  font-weight: 700;
+  overflow: hidden;
+  padding: 0.34rem 0.38rem;
+  text-align: left;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.34);
+  transition: filter 90ms linear, opacity 90ms linear, transform 90ms linear;
+}
+
+.worklog-treemap__tile span,
+.worklog-treemap__tile strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.worklog-treemap__tile strong {
+  position: absolute;
+  bottom: 0.32rem;
+  left: 0.38rem;
+  margin-top: 0.08rem;
+  font-size: 0.64rem;
+}
+
+.worklog-treemap__tile.is-active {
+  filter: saturate(1.2) brightness(1.06);
+  transform: scale(1.01);
+}
+
+.worklog-treemap__tile.is-muted {
+  opacity: 0.42;
 }
 
 .settings-category--scheduled-ad-sync {
@@ -5838,10 +6244,17 @@ select:disabled {
 
   .worklog-chart {
     grid-template-columns: 1fr;
+    max-height: none;
   }
 
   .worklog-chart-legend {
+    width: min(100%, 560px);
+    max-height: 320px;
     margin: 0 auto;
+  }
+
+  .worklog-chart__detail {
+    max-width: min(100%, 20rem);
   }
 
   .admin-layout {
@@ -6000,7 +6413,7 @@ select:disabled {
 
 @media (max-width: 640px) {
   .worklog-chart--donut,
-  .worklog-chart--pie,
+  .worklog-chart--treemap,
   .worklog-toolbar__row--primary,
   .worklog-toolbar__row--secondary {
     grid-template-columns: minmax(0, 1fr);
@@ -6009,10 +6422,26 @@ select:disabled {
   .worklog-toolbar__actions,
   .worklog-toolbar__toggles,
   .worklog-toolbar__buttons,
-  .worklog-results__toolbar,
-  .worklog-bar-chart__label {
+  .worklog-modal__controls,
+  .worklog-results__toolbar {
     flex-direction: column;
     align-items: start;
+  }
+
+  .worklog-modal__controls {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto;
+    align-items: stretch;
+    row-gap: 1rem;
+  }
+
+  .worklog-modal__toggle,
+  .worklog-link-type-search {
+    grid-column: auto;
+    grid-row: auto;
+    justify-self: stretch;
+    width: 100%;
   }
 
   .worklog-export-button,
@@ -6034,6 +6463,28 @@ select:disabled {
   .worklog-issue-picker__header {
     grid-template-columns: minmax(6.5rem, 9rem) minmax(0, 1fr) minmax(5rem, 6.5rem);
     gap: 0.55rem;
+  }
+
+  .worklog-link-type-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .worklog-chart__info {
+    min-width: 0;
+    width: 100%;
+    padding: 0.55rem 0.7rem;
+  }
+
+  .worklog-chart__detail {
+    width: 100%;
+    max-width: 100%;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
+
+  .worklog-chart__detail-text {
+    text-align: left;
   }
 
   .dashboard-create {
@@ -6486,6 +6937,10 @@ html[data-theme="timero"] .app-footer__version {
   color: rgba(86, 92, 84, 0.58);
 }
 
+html[data-theme="timero"] .app-footer__separator {
+  color: rgba(112, 94, 76, 0.52);
+}
+
 html[data-theme="timero"] .app-footer__link {
   color: #bf5e33;
 }
@@ -6843,6 +7298,18 @@ html[data-theme="timero"] .worklog-sheet__table td {
   color: #223228;
 }
 
+html[data-theme="timero"] .worklog-sheet__row.is-chart-match td {
+  background: rgba(255, 236, 220, 0.86);
+}
+
+html[data-theme="timero"] .worklog-sheet__row.is-chart-match td:first-child {
+  box-shadow: inset 3px 0 0 rgba(191, 94, 51, 0.7);
+}
+
+html[data-theme="timero"] .worklog-sheet__subtotal.is-chart-match td {
+  background: rgba(247, 220, 199, 0.96);
+}
+
 html[data-theme="timero"] .worklog-sheet__table th {
   color: rgba(86, 92, 84, 0.84);
   background: rgba(238, 232, 224, 0.72);
@@ -6859,6 +7326,26 @@ html[data-theme="timero"] .worklog-user-picker__empty {
   color: rgba(69, 80, 72, 0.72);
 }
 
+html[data-theme="timero"] .worklog-table-toggle {
+  border-color: rgba(112, 94, 76, 0.12);
+  background: rgba(255, 255, 255, 0.72) !important;
+  color: #223228 !important;
+  box-shadow: none !important;
+}
+
+html[data-theme="timero"] .worklog-table-toggle:hover:not(:disabled) {
+  border-color: rgba(191, 94, 51, 0.22);
+  background: rgba(255, 244, 232, 0.9) !important;
+}
+
+html[data-theme="timero"] .worklog-table-toggle span {
+  color: #223228;
+}
+
+html[data-theme="timero"] .worklog-table-toggle strong {
+  color: rgba(86, 92, 84, 0.74);
+}
+
 html[data-theme="timero"] .worklog-selected-chip {
   border-color: rgba(112, 94, 76, 0.12);
   background: rgba(255, 255, 255, 0.72);
@@ -6873,6 +7360,65 @@ html[data-theme="timero"] .worklog-issue-picker__menu {
   border-color: rgba(112, 94, 76, 0.12);
   background: rgba(255, 252, 248, 0.98);
   box-shadow: 0 16px 30px rgba(122, 104, 86, 0.12);
+}
+
+html[data-theme="timero"] .worklog-modal {
+  background: #fffaf4;
+  border-color: rgba(112, 94, 76, 0.14);
+  box-shadow: 0 28px 72px rgba(120, 82, 47, 0.18);
+  color: #223228;
+}
+
+html[data-theme="timero"] .worklog-modal-backdrop {
+  background: rgba(68, 55, 44, 0.24);
+  backdrop-filter: blur(8px);
+}
+
+html[data-theme="timero"] .worklog-modal__header span,
+html[data-theme="timero"] .worklog-link-type-search span,
+html[data-theme="timero"] .worklog-link-type-row__meta {
+  color: rgba(86, 92, 84, 0.68);
+}
+
+html[data-theme="timero"] .worklog-link-type-list {
+  scrollbar-color: rgba(191, 94, 51, 0.36) rgba(112, 94, 76, 0.08);
+}
+
+html[data-theme="timero"] .worklog-link-type-row {
+  border-color: rgba(112, 94, 76, 0.12);
+  background: rgba(255, 255, 255, 0.72) !important;
+  color: #223228 !important;
+  box-shadow: none !important;
+}
+
+html[data-theme="timero"] .worklog-link-type-row:hover:not(:disabled) {
+  border-color: rgba(191, 94, 51, 0.24);
+  background: rgba(255, 244, 232, 0.92) !important;
+}
+
+html[data-theme="timero"] .worklog-link-type-row.is-selected {
+  border-color: rgba(191, 94, 51, 0.34);
+  background: rgba(255, 236, 220, 0.96) !important;
+}
+
+html[data-theme="timero"] .worklog-link-type-row__issue {
+  border-color: rgba(112, 94, 76, 0.14);
+  background: rgba(247, 240, 232, 0.88);
+  color: #223228;
+  box-shadow: none;
+}
+
+html[data-theme="timero"] .worklog-link-type-row__line span {
+  background: rgba(191, 94, 51, 0.55);
+}
+
+html[data-theme="timero"] .worklog-link-type-row__line strong {
+  color: #223228;
+}
+
+html[data-theme="timero"] .worklog-link-type-list.is-disabled .worklog-link-type-row {
+  background: rgba(245, 238, 231, 0.76) !important;
+  color: rgba(70, 58, 47, 0.5) !important;
 }
 
 html[data-theme="timero"] .worklog-pill,
@@ -6903,6 +7449,19 @@ html[data-theme="glow"] .worklog-sheet {
   box-shadow: none;
 }
 
+html[data-theme="glow"] .worklog-modal {
+  background:
+    linear-gradient(180deg, rgba(16, 34, 32, 0.98), rgba(7, 23, 20, 0.98)),
+    #071714;
+  border-color: rgba(189, 218, 203, 0.16);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.52);
+  color: #f4f0e5;
+}
+
+html[data-theme="glow"] .worklog-modal-backdrop {
+  background: rgba(1, 8, 7, 0.74);
+}
+
 html[data-theme="glow"] .worklog-sheet__table th,
 html[data-theme="glow"] .worklog-sheet__table td {
   border-color: rgba(189, 218, 203, 0.12);
@@ -6917,9 +7476,38 @@ html[data-theme="glow"] .worklog-chart__info,
 html[data-theme="glow"] .worklog-chart-legend__item,
 html[data-theme="glow"] .worklog-selected-chip,
 html[data-theme="glow"] .worklog-pill,
-html[data-theme="glow"] .worklog-user-option {
-  background: rgba(255, 255, 255, 0.03);
+html[data-theme="glow"] .worklog-user-option,
+html[data-theme="glow"] .worklog-link-type-row,
+html[data-theme="glow"] .worklog-link-type-row__issue {
   box-shadow: none;
+}
+
+html[data-theme="glow"] .worklog-link-type-row {
+  border-color: rgba(244, 240, 229, 0.2);
+  color: rgba(244, 240, 229, 0.9);
+  background:
+    linear-gradient(180deg, rgba(244, 240, 229, 0.07), rgba(244, 240, 229, 0.035)),
+    rgba(12, 22, 21, 0.92);
+}
+
+html[data-theme="glow"] .worklog-link-type-row__issue {
+  border-color: rgba(244, 240, 229, 0.16);
+  color: rgba(244, 240, 229, 0.82);
+  background: rgba(244, 240, 229, 0.055);
+}
+
+html[data-theme="glow"] .worklog-link-type-row__line span {
+  background: rgba(238, 132, 80, 0.68);
+}
+
+html[data-theme="glow"] .worklog-link-type-row__meta,
+html[data-theme="glow"] .worklog-modal__header span {
+  color: rgba(244, 240, 229, 0.66);
+}
+
+html[data-theme="glow"] .worklog-link-type-row.is-selected {
+  border-color: rgba(120, 198, 163, 0.55);
+  background: rgba(120, 198, 163, 0.14);
 }
 
 html[data-theme="glow"] .worklog-pie-chart__center {

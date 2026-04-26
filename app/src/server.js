@@ -38,6 +38,7 @@ import {
   getJiraBoard,
   listJiraAssignableUsers,
   listJiraBoards,
+  listJiraIssueLinkTypes,
   listJiraIssues,
   listJiraSprints,
   listJiraWorklogUsers,
@@ -2438,12 +2439,17 @@ app.post("/api/jira/worklog/report", requireUser, requireWorklogView, async (req
     const groupIds = Array.isArray(filters.groupIds)
       ? filters.groupIds.map((value) => String(value || "").trim()).filter(Boolean)
       : [];
+    const linkedIssueTypeIds = Array.isArray(filters.linkedIssueTypeIds)
+      ? filters.linkedIssueTypeIds.map((value) => String(value || "").trim()).filter(Boolean)
+      : [];
     await logAudit(req.user.id, "jira.worklog.report", "jira", {
       dateFrom: filters.dateFrom,
       dateTo: filters.dateTo,
       issueKeys,
       projectKeys,
       groupIds,
+      includeLinkedIssues: Boolean(filters.includeLinkedIssues),
+      linkedIssueTypeIds,
       rowCount: rows.length,
       viewMode: filters.viewMode || "issue-first",
     });
@@ -2459,6 +2465,15 @@ app.get("/api/jira/worklog/users", requireUser, requireWorklogView, async (req, 
     json(res, { users });
   } catch (error) {
     json(res, { error: error instanceof Error ? error.message : "Failed to load Jira users or groups." }, 400);
+  }
+});
+
+app.get("/api/jira/worklog/link-types", requireUser, requireWorklogView, async (req, res) => {
+  try {
+    const linkTypes = await listJiraIssueLinkTypes(await getSettings());
+    json(res, { linkTypes });
+  } catch (error) {
+    json(res, { error: error instanceof Error ? error.message : "Failed to load Jira issue link types." }, 400);
   }
 });
 

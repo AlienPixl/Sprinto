@@ -681,7 +681,17 @@ describe("jira helpers", () => {
         json: async () => ({
           issues: [{
             key: "MED-1",
-            fields: { summary: "Mediox work item" },
+            fields: {
+              summary: "Mediox work item",
+              issuetype: { name: "Task" },
+              parent: {
+                key: "MED-100",
+                fields: {
+                  summary: "Mediox epic",
+                  issuetype: { name: "Epic" },
+                },
+              },
+            },
           }],
           total: 1,
         }),
@@ -714,6 +724,9 @@ describe("jira helpers", () => {
 
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
+      epicKey: "MED-100",
+      epicTitle: "Mediox epic",
+      epicUrl: "https://example.atlassian.net/browse/MED-100",
       issueKey: "MED-1",
       issueTitle: "Mediox work item",
       issueUrl: "https://example.atlassian.net/browse/MED-1",
@@ -723,7 +736,94 @@ describe("jira helpers", () => {
     const projectSearchBody = JSON.parse(String(fetchMock.mock.calls[0][1]?.body || "{}"));
     expect(projectSearchBody.jql).toContain('project = "MED"');
     expect(projectSearchBody.jql).toContain('worklogDate >= "2026-04-01"');
+    expect(projectSearchBody.fields).toContain("parent");
     expect(String(fetchMock.mock.calls[1][0] || "")).toContain("startedAfter=");
+  });
+
+  it("adds selected linked issues to worklog rows with source metadata", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          issues: [{
+            key: "MED-1",
+            fields: {
+              summary: "Mediox work item",
+              issuetype: { name: "Task" },
+              issuelinks: [
+                {
+                  type: { id: "10001", name: "Relates", outward: "relates to", inward: "relates to" },
+                  outwardIssue: { key: "OPS-7" },
+                },
+              ],
+            },
+          }],
+          total: 1,
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          issues: [{
+            key: "OPS-7",
+            fields: {
+              summary: "Ops dependency",
+              issuetype: { name: "Task" },
+            },
+          }],
+          total: 1,
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          total: 0,
+          worklogs: [],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          total: 1,
+          worklogs: [
+            {
+              started: "2026-04-01T11:00:00.000+0000",
+              timeSpentSeconds: 1200,
+              author: { accountId: "xyz", displayName: "Bob" },
+            },
+          ],
+        }),
+      });
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    const rows = await buildJiraWorklogReport(settings, {
+      dateFrom: "2026-04-01",
+      dateTo: "2026-04-02",
+      issueKeys: [],
+      projectKeys: ["MED"],
+      includeEpicChildren: false,
+      includeLinkedIssues: true,
+      linkedIssueTypeIds: ["10001"],
+      assigneeAccountIds: [],
+      groupIds: [],
+      viewMode: "issue-first",
+    });
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      issueKey: "OPS-7",
+      issueTitle: "Ops dependency",
+      linkSourceIssueKey: "MED-1",
+      linkSourceIssueTitle: "Mediox work item",
+      linkSourceIssueUrl: "https://example.atlassian.net/browse/MED-1",
+      linkTypeId: "10001",
+      linkTypeName: "Relates",
+      linkLabel: "relates to",
+      linkDirection: "outward",
+    });
+    const linkedSearchBody = JSON.parse(String(fetchMock.mock.calls[1][1]?.body || "{}"));
+    expect(linkedSearchBody.jql).toContain('issuekey = "OPS-7"');
+    expect(linkedSearchBody.jql).toContain('worklogDate >= "2026-04-01"');
   });
 
   it("filters worklog rows by selected Jira group members", async () => {
@@ -782,16 +882,12 @@ describe("jira helpers", () => {
       includeEpicChildren: false,
       assigneeAccountIds: [],
       groupIds: ["group-1"],
-      groupLabelsById: {
-        "group-1": "Finance Leads",
-      },
       viewMode: "issue-first",
     });
 
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
       issueKey: "MED-1",
-      groupNames: ["Finance Leads"],
       author: "Alice Example",
       secondsSpent: 1800,
     });

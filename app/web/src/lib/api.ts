@@ -11,6 +11,7 @@ import {
   JiraImportFilters,
   JiraImportPreviewIssue,
   JiraImportSyncResult,
+  JiraIssueLinkType,
   JiraSprint,
   JiraWorklogReport,
   JiraWorklogRequest,
@@ -479,6 +480,11 @@ export async function getJiraWorklogUsers(query = ""): Promise<JiraAssignableUse
   const suffix = params.toString() ? `?${params.toString()}` : "";
   const payload = await request<{ users: JiraAssignableUser[] }>(`/api/jira/worklog/users${suffix}`);
   return payload.users;
+}
+
+export async function getJiraWorklogLinkTypes(): Promise<JiraIssueLinkType[]> {
+  const payload = await request<{ linkTypes: JiraIssueLinkType[] }>("/api/jira/worklog/link-types");
+  return payload.linkTypes;
 }
 
 export async function getJiraWorklogIssues(query = ""): Promise<JiraWorklogIssue[]> {

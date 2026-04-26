@@ -27,6 +27,7 @@ import {
   deleteRole,
   getJiraWorklogIssue,
   getJiraWorklogIssues,
+  getJiraWorklogLinkTypes,
   getJiraWorklogReport,
   getJiraWorklogUsers,
   getAdminOverview,
@@ -1098,6 +1099,7 @@ export function App() {
           <WorklogView
             onLoadIssue={getJiraWorklogIssue}
             onLoadIssues={getJiraWorklogIssues}
+            onLoadLinkTypes={getJiraWorklogLinkTypes}
             onLoadReport={getJiraWorklogReport}
             onLoadUsers={getJiraWorklogUsers}
           />

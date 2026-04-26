@@ -255,19 +255,34 @@ export type JiraDeliveryStatus = {
   assignee: JiraAssigneeDeliveryRecord;
 };
 
+export type JiraIssueLinkType = {
+  id: string;
+  name: string;
+  inward: string;
+  outward: string;
+};
+
 export type JiraWorklogRow = {
   epicKey: string;
+  epicTitle?: string;
+  epicUrl?: string;
   issueKey: string;
   issueTitle: string;
   issueUrl: string;
-  groupNames?: string[];
+  linkSourceIssueKey?: string;
+  linkSourceIssueTitle?: string;
+  linkSourceIssueUrl?: string;
+  linkTypeId?: string;
+  linkTypeName?: string;
+  linkLabel?: string;
+  linkDirection?: string;
   accountId: string;
   author: string;
   startedAt: string;
   secondsSpent: number;
 };
 
-export type JiraWorklogGroupBy = "epic" | "issue" | "user" | "group";
+export type JiraWorklogGroupBy = "epic" | "issue" | "user";
 
 export type JiraWorklogRequest = {
   dateFrom: string;
@@ -275,9 +290,10 @@ export type JiraWorklogRequest = {
   issueKeys: string[];
   projectKeys: string[];
   includeEpicChildren: boolean;
+  includeLinkedIssues: boolean;
+  linkedIssueTypeIds: string[];
   assigneeAccountIds: string[];
   groupIds: string[];
-  groupLabelsById?: Record<string, string>;
   viewMode: "issue-first" | "user-first" | "epic-first";
   primaryGroupBy?: JiraWorklogGroupBy;
   secondaryGroupBy?: JiraWorklogGroupBy | "";
