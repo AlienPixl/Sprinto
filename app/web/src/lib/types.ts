@@ -96,7 +96,7 @@ export type RoomEvent = {
   data: RoomSnapshot;
 };
 
-export type ThemeId = "sprinto" | "timero";
+export type ThemeId = "sprinto" | "glow";
 
 export type User = {
   id: string;

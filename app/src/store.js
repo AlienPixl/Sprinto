@@ -163,7 +163,7 @@ const SCHEDULED_TASK_WEEKDAY_VALUES = [
   "saturday",
   "sunday",
 ];
-const USER_THEME_VALUES = new Set(["sprinto", "timero"]);
+const USER_THEME_VALUES = new Set(["sprinto", "glow", "timero"]);
 const ROOM_HIGHLIGHT_MODE_VALUES = new Set(["none", "most-frequent", "highest"]);
 const ROOM_STATUS_VALUES = ["open", "voting", "revealed", "closed"];
 const SCHEDULED_TASK_AGE_UNIT_VALUES = ["minutes", "hours", "days", "weeks", "months", "years"];
@@ -240,6 +240,9 @@ function getWeekdayName(date) {
 
 function normalizeUserTheme(theme) {
   const normalized = String(theme || "").trim().toLowerCase();
+  if (normalized === "glow" || normalized === "timero") {
+    return "glow";
+  }
   return USER_THEME_VALUES.has(normalized) ? normalized : "sprinto";
 }
 

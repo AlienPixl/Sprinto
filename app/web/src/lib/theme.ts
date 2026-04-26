@@ -8,13 +8,13 @@ export const THEME_OPTIONS: Array<{ value: ThemeId; label: string }> = [
     label: "Sprinto Classic"
   },
   {
-    value: "timero",
+    value: "glow",
     label: "Sprinto Glow"
   }
 ];
 
 export function normalizeTheme(value: unknown): ThemeId {
-  return value === "timero" ? "timero" : "sprinto";
+  return value === "glow" || value === "timero" ? "glow" : "sprinto";
 }
 
 export function readStoredThemePreference(): ThemeId {

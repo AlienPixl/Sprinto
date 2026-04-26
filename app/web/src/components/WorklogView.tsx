@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { JiraAssignableUser, JiraIssueLinkType, JiraWorklogGroupBy, JiraWorklogIssue, JiraWorklogReport, JiraWorklogRequest, JiraWorklogRow } from "../lib/types";
+import type { WorklogExportPayload, WorklogExportFormat } from "../lib/worklog-export";
 
 type WorklogViewProps = {
   onLoadIssue: (issueKey: string) => Promise<JiraWorklogIssue>;
@@ -9,7 +10,6 @@ type WorklogViewProps = {
   onLoadUsers: (query?: string) => Promise<JiraAssignableUser[]>;
 };
 
-type WorklogChartType = "donut" | "treemap";
 type WorklogSortDirection = "asc" | "desc";
 type WorklogSortColumn = JiraWorklogGroupBy | "time";
 
@@ -104,7 +104,6 @@ export function WorklogView({ onLoadIssue: _onLoadIssue, onLoadIssues, onLoadLin
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [report, setReport] = useState<JiraWorklogReport>({ rows: [] });
-  const [chartType, setChartType] = useState<WorklogChartType>("donut");
   const [activeChartLabel, setActiveChartLabel] = useState("");
   const [tableExpanded, setTableExpanded] = useState(false);
   const [sortState, setSortState] = useState<WorklogSortState>({ column: "issue", direction: "asc" });
@@ -123,8 +122,11 @@ export function WorklogView({ onLoadIssue: _onLoadIssue, onLoadIssues, onLoadLin
   const [linkTypesLoading, setLinkTypesLoading] = useState(false);
   const [linkTypesLoaded, setLinkTypesLoaded] = useState(false);
   const [linkTypesError, setLinkTypesError] = useState("");
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const [exportingFormat, setExportingFormat] = useState<WorklogExportFormat | "">("");
   const issuePickerRef = useRef<HTMLDivElement | null>(null);
   const userPickerRef = useRef<HTMLDivElement | null>(null);
+  const exportMenuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -211,6 +213,9 @@ export function WorklogView({ onLoadIssue: _onLoadIssue, onLoadIssues, onLoadLin
         setUserPickerOpen(false);
         clearUserSelection();
       }
+      if (!exportMenuRef.current?.contains(event.target as Node)) {
+        setExportMenuOpen(false);
+      }
     }
 
     document.addEventListener("mousedown", handleClickOutside);
@@ -225,6 +230,7 @@ export function WorklogView({ onLoadIssue: _onLoadIssue, onLoadIssues, onLoadLin
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
         setLinkedSettingsOpen(false);
+        setExportMenuOpen(false);
       }
     }
 
@@ -303,6 +309,94 @@ export function WorklogView({ onLoadIssue: _onLoadIssue, onLoadIssues, onLoadLin
   const availablePrimaryGroups = getAvailableGroupByOptions();
   const availableSecondaryGroups = getAvailableSecondaryGroupByOptions(grouping.primary);
   const summaryText = `${summary.issueCount} issues · ${summary.userCount} users · ${summary.totalEntries} entries · ${summary.blockCount} groups`;
+  const selectedLinkTypeLabels = useMemo(
+    () => request.linkedIssueTypeIds
+      .map((id) => linkTypes.find((linkType) => linkType.id === id)?.name || "")
+      .filter(Boolean),
+    [linkTypes, request.linkedIssueTypeIds]
+  );
+  const exportPayload = useMemo<WorklogExportPayload>(() => ({
+    blocks: groupedBlocks.map((block) => ({
+      label: block.primaryLabel,
+      totalSeconds: block.totalSeconds,
+      rows: block.rows.map((row) => ({
+        values: {
+          epic: row.epic,
+          issue: row.issue,
+          user: row.user,
+        },
+        urls: {
+          epic: row.epicUrl,
+          issue: row.issueUrl,
+        },
+        source: formatSourceLabel(row),
+        sourceUrl: row.sourceIssueUrl,
+        secondsSpent: row.secondsSpent,
+      })),
+    })),
+    columns: tableColumns.map((column) => ({
+      key: column,
+      label: GROUP_BY_LABELS[column],
+    })),
+    fileBaseName: `jira-worklog-${request.dateFrom}-${request.dateTo}`,
+    filters: [
+      { label: "Date range", value: `${request.dateFrom} -> ${request.dateTo}` },
+      {
+        label: "Issue scope",
+        value: selectedIssues.length
+          ? selectedIssues.map((issue) => issue.key).join(", ")
+          : "All issues",
+      },
+      {
+        label: "Users or groups",
+        value: selectedUsers.length
+          ? selectedUsers.map((user) => user.displayName).join(", ")
+          : "All users",
+      },
+      {
+        label: "Grouping",
+        value: `${GROUP_BY_LABELS[grouping.primary]}${grouping.secondary ? ` -> ${GROUP_BY_LABELS[grouping.secondary]}` : ""}`,
+      },
+      {
+        label: "Epic children",
+        value: request.includeEpicChildren ? "Included" : "Hidden",
+      },
+      {
+        label: "Linked issues",
+        value: request.includeLinkedIssues
+          ? (selectedLinkTypeLabels.length ? selectedLinkTypeLabels.join(", ") : `${request.linkedIssueTypeIds.length} selected`)
+          : "Off",
+      },
+    ],
+    primaryGroupLabel: GROUP_BY_LABELS[grouping.primary],
+    showSourceColumn: hasLinkedData,
+    summary: {
+      blockCount: summary.blockCount,
+      issueCount: summary.issueCount,
+      totalEntries: summary.totalEntries,
+      totalSeconds: visibleRows.reduce((sum, row) => sum + row.secondsSpent, 0),
+      userCount: summary.userCount,
+    },
+  }), [
+    groupedBlocks,
+    grouping.primary,
+    grouping.secondary,
+    hasLinkedData,
+    request.dateFrom,
+    request.dateTo,
+    request.includeEpicChildren,
+    request.includeLinkedIssues,
+    request.linkedIssueTypeIds.length,
+    selectedIssues,
+    selectedLinkTypeLabels,
+    selectedUsers,
+    summary.blockCount,
+    summary.issueCount,
+    summary.totalEntries,
+    summary.userCount,
+    tableColumns,
+    visibleRows,
+  ]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -447,56 +541,21 @@ export function WorklogView({ onLoadIssue: _onLoadIssue, onLoadIssues, onLoadLin
     });
   }
 
-  function handleExportCsv() {
-    if (groupedBlocks.length === 0) {
+  async function handleExport(format: WorklogExportFormat) {
+    if (groupedBlocks.length === 0 || exportingFormat) {
       return;
     }
-
-    const header = [...tableColumns.map((column) => GROUP_BY_LABELS[column]), ...(hasLinkedData ? ["Source"] : []), "Time"];
-
-    const csvRows = groupedBlocks.flatMap((block, blockIndex) => {
-      const rows = block.rows.map((row, rowIndex) => [
-        ...tableColumns.map((column, columnIndex) =>
-          csvValue(shouldRenderColumnValue(block.rows, rowIndex, columnIndex, tableColumns) ? getRowLabel(row, column) : "")
-        ),
-        ...(hasLinkedData ? [csvValue(formatSourceLabel(row))] : []),
-        csvValue(formatDuration(row.secondsSpent)),
-      ].join(","));
-
-      const subtotal = tableColumns.map((_, columnIndex) => {
-        if (columnIndex === Math.max(tableColumns.length - 1, 0)) {
-          return csvValue("Celkem");
-        }
-        return csvValue("");
-      });
-      if (hasLinkedData) {
-        subtotal.push(csvValue(""));
-      }
-      rows.push([...subtotal, csvValue(formatDuration(block.totalSeconds))].join(","));
-
-      if (blockIndex < groupedBlocks.length - 1) {
-        rows.push(header.map(() => csvValue("")).join(","));
-      }
-
-      return rows;
-    });
-
-    csvRows.push(
-      [
-        ...tableColumns.map((_, columnIndex) => csvValue(columnIndex === Math.max(tableColumns.length - 1, 0) ? "Celkem celkem" : "")),
-        ...(hasLinkedData ? [csvValue("")] : []),
-        csvValue(formatDuration(visibleRows.reduce((sum, row) => sum + row.secondsSpent, 0))),
-      ].join(",")
-    );
-
-    const lines = [header.join(","), ...csvRows].join("\n");
-    const blob = new Blob([lines], { type: "text/csv;charset=utf-8" });
-    const url = window.URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `jira-worklog-${request.dateFrom}-${request.dateTo}.csv`;
-    anchor.click();
-    window.URL.revokeObjectURL(url);
+    setExportingFormat(format);
+    setError("");
+    setExportMenuOpen(false);
+    try {
+      const { exportWorklogFile } = await import("../lib/worklog-export");
+      await exportWorklogFile(format, exportPayload);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : `Failed to export ${format.toUpperCase()} file.`);
+    } finally {
+      setExportingFormat("");
+    }
   }
 
   return (
@@ -653,14 +712,6 @@ export function WorklogView({ onLoadIssue: _onLoadIssue, onLoadIssues, onLoadLin
               </select>
             </label>
 
-            <label className="worklog-toolbar__field">
-              <span>Chart</span>
-              <select value={chartType} onChange={(event) => setChartType(event.target.value as WorklogChartType)}>
-                <option value="donut">Donut</option>
-                <option value="treemap">Treemap</option>
-              </select>
-            </label>
-
             <div className="worklog-toolbar__field">
               <span>Links</span>
               <button
@@ -672,6 +723,22 @@ export function WorklogView({ onLoadIssue: _onLoadIssue, onLoadIssues, onLoadLin
                 <strong>Linked issues</strong>
                 <span>{request.includeLinkedIssues ? `${request.linkedIssueTypeIds.length} selected` : "Off"}</span>
               </button>
+            </div>
+
+            <div className="worklog-toolbar__field worklog-toolbar__field--toggle">
+              <span>Epic</span>
+              <label className="settings-toggle worklog-toolbar__toggle-field">
+                <button
+                  aria-label="Epic - Include children"
+                  aria-pressed={request.includeEpicChildren}
+                  className={`toggle-switch ${request.includeEpicChildren ? "is-active" : ""}`}
+                  onClick={() => setRequest({ ...request, includeEpicChildren: !request.includeEpicChildren })}
+                  type="button"
+                >
+                  <span className="toggle-switch__knob" />
+                </button>
+                <span>Include children</span>
+              </label>
             </div>
           </div>
 
@@ -712,25 +779,32 @@ export function WorklogView({ onLoadIssue: _onLoadIssue, onLoadIssues, onLoadLin
             </div>
 
             <div className="worklog-toolbar__actions">
-              <div className="worklog-toolbar__toggles">
-                <label className="settings-toggle">
+              <div className="worklog-toolbar__buttons">
+                <div className={`worklog-export-menu ${exportMenuOpen ? "is-open" : ""}`} ref={exportMenuRef}>
                   <button
-                    aria-label="Epic - Include children"
-                    aria-pressed={request.includeEpicChildren}
-                    className={`toggle-switch ${request.includeEpicChildren ? "is-active" : ""}`}
-                    onClick={() => setRequest({ ...request, includeEpicChildren: !request.includeEpicChildren })}
+                    aria-expanded={exportMenuOpen}
+                    aria-haspopup="menu"
+                    className="ghost-button worklog-export-button"
+                    disabled={groupedBlocks.length === 0 || Boolean(exportingFormat)}
+                    onClick={() => setExportMenuOpen((current) => !current)}
                     type="button"
                   >
-                    <span className="toggle-switch__knob" />
+                    {exportingFormat ? `Exporting ${exportingFormat.toUpperCase()}...` : "Export"}
                   </button>
-                  <span>Epic - Include children</span>
-                </label>
-              </div>
-
-              <div className="worklog-toolbar__buttons">
-                <button className="ghost-button worklog-export-button" disabled={groupedBlocks.length === 0} onClick={handleExportCsv} type="button">
-                  Export
-                </button>
+                  {exportMenuOpen ? (
+                    <div className="worklog-export-menu__popover" role="menu">
+                      <button className="worklog-export-menu__option" onClick={() => void handleExport("csv")} role="menuitem" type="button">
+                        <strong>CSV</strong>
+                      </button>
+                      <button className="worklog-export-menu__option" onClick={() => void handleExport("excel")} role="menuitem" type="button">
+                        <strong>Excel</strong>
+                      </button>
+                      <button className="worklog-export-menu__option" onClick={() => void handleExport("pdf")} role="menuitem" type="button">
+                        <strong>PDF</strong>
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
                 <button className="ghost-button worklog-export-button" disabled={loading} type="submit">
                   {loading ? "Loading..." : "View report"}
                 </button>
@@ -748,7 +822,6 @@ export function WorklogView({ onLoadIssue: _onLoadIssue, onLoadIssues, onLoadLin
                 <span>{summaryText}</span>
               </div>
               <WorklogChart
-                chartType={chartType}
                 data={chartData}
                 groupBy={grouping.primary}
                 selectedLabel={activeChartLabel}
@@ -1329,18 +1402,50 @@ function shouldRenderColumnValue(rows: GroupedRow[], rowIndex: number, columnInd
 }
 
 function WorklogChart({
-  chartType,
   data,
   groupBy,
   onSelectionChange,
   selectedLabel,
 }: {
-  chartType: WorklogChartType;
   data: WorklogChartDatum[];
   groupBy: JiraWorklogGroupBy;
   onSelectionChange: (updater: string) => void;
   selectedLabel: string;
 }) {
+  const legendRef = useRef<HTMLDivElement | null>(null);
+  const [legendScrollState, setLegendScrollState] = useState({
+    canScroll: false,
+    atEnd: false,
+  });
+
+  useEffect(() => {
+    const element = legendRef.current;
+    if (!element) {
+      return;
+    }
+
+    const updateLegendScrollState = () => {
+      const { clientHeight, scrollHeight, scrollTop } = element;
+      const canScroll = scrollHeight - clientHeight > 4;
+      const atEnd = !canScroll || scrollTop + clientHeight >= scrollHeight - 4;
+
+      setLegendScrollState((current) => (
+        current.canScroll !== canScroll || current.atEnd !== atEnd
+          ? { canScroll, atEnd }
+          : current
+      ));
+    };
+
+    updateLegendScrollState();
+    element.addEventListener("scroll", updateLegendScrollState, { passive: true });
+    window.addEventListener("resize", updateLegendScrollState);
+
+    return () => {
+      element.removeEventListener("scroll", updateLegendScrollState);
+      window.removeEventListener("resize", updateLegendScrollState);
+    };
+  }, [data]);
+
   if (data.length === 0) {
     return <div className="worklog-chart-empty">No chart data</div>;
   }
@@ -1349,7 +1454,7 @@ function WorklogChart({
   const activeItem = data.find((item) => item.label === selectedLabel) || null;
 
   return (
-    <div className={`worklog-chart worklog-chart--${chartType}`}>
+    <div className="worklog-chart worklog-chart--donut">
       <div className="worklog-chart__visual">
         <div className={`worklog-chart__info ${activeItem ? "is-active" : ""}`}>
           <strong>{activeItem ? activeItem.label : `${GROUP_BY_LABELS[groupBy]} split`}</strong>
@@ -1371,35 +1476,41 @@ function WorklogChart({
           ) : null}
           <span>{activeItem ? `${formatDuration(activeItem.secondsSpent)} • ${formatShare(activeItem.secondsSpent, totalSeconds)}` : `${formatDuration(totalSeconds)} total`}</span>
         </div>
-        {chartType === "treemap" ? (
-          <WorklogTreemap activeLabel={selectedLabel} data={data} onSelect={onSelectionChange} totalSeconds={totalSeconds} />
-        ) : (
-          <WorklogPieChart
-            activeItem={activeItem}
-            activeLabel={selectedLabel}
-            data={data}
-            onSelect={onSelectionChange}
-            totalSeconds={totalSeconds}
-          />
-        )}
+        <WorklogPieChart
+          activeItem={activeItem}
+          activeLabel={selectedLabel}
+          data={data}
+          onSelect={onSelectionChange}
+          totalSeconds={totalSeconds}
+        />
       </div>
-      <div className="worklog-chart-legend">
-        {data.map((item) => (
-          <button
-            aria-pressed={selectedLabel === item.label}
-            aria-label={`Focus ${item.label} in chart and table`}
-            className={`worklog-chart-legend__item ${selectedLabel === item.label ? "is-active" : ""} ${selectedLabel && selectedLabel !== item.label ? "is-muted" : ""}`}
-            key={item.label}
-            onClick={() => onSelectionChange(selectedLabel === item.label ? "" : item.label)}
-            type="button"
-          >
-            <span className="worklog-chart-legend__swatch" style={{ backgroundColor: item.color }} />
-            <div className="worklog-chart-legend__content">
-              <strong>{item.label}</strong>
-              <span>{formatDuration(item.secondsSpent)} • {formatShare(item.secondsSpent, totalSeconds)}</span>
-            </div>
-          </button>
-        ))}
+      <div className={`worklog-chart-legend-shell ${legendScrollState.canScroll ? "is-scrollable" : ""}`}>
+        <div
+          className={`worklog-chart-legend ${legendScrollState.canScroll ? "is-scrollable" : ""}`}
+          ref={legendRef}
+        >
+          {data.map((item) => (
+            <button
+              aria-pressed={selectedLabel === item.label}
+              aria-label={`Focus ${item.label} in chart and table`}
+              className={`worklog-chart-legend__item ${selectedLabel === item.label ? "is-active" : ""} ${selectedLabel && selectedLabel !== item.label ? "is-muted" : ""}`}
+              key={item.label}
+              onClick={() => onSelectionChange(selectedLabel === item.label ? "" : item.label)}
+              type="button"
+            >
+              <span className="worklog-chart-legend__swatch" style={{ backgroundColor: item.color }} />
+              <div className="worklog-chart-legend__content">
+                <strong>{item.label}</strong>
+                <span>{formatDuration(item.secondsSpent)} • {formatShare(item.secondsSpent, totalSeconds)}</span>
+              </div>
+            </button>
+          ))}
+        </div>
+        {legendScrollState.canScroll && !legendScrollState.atEnd ? (
+          <div aria-hidden="true" className="worklog-chart-legend__overflow-note">
+            Scroll for more items
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -1481,106 +1592,6 @@ function WorklogPieChart({
       </text>
     </svg>
   );
-}
-
-function WorklogTreemap({
-  activeLabel,
-  data,
-  onSelect,
-  totalSeconds,
-}: {
-  activeLabel: string;
-  data: WorklogChartDatum[];
-  onSelect: (label: string) => void;
-  totalSeconds: number;
-}) {
-  const tiles = getTreemapTiles(data, totalSeconds);
-
-  return (
-    <div className="worklog-treemap" role="img" aria-label="Worklog share treemap">
-      {tiles.map((tile) => (
-        <button
-          className={`worklog-treemap__tile ${activeLabel === tile.item.label ? "is-active" : activeLabel && activeLabel !== tile.item.label ? "is-muted" : ""}`}
-          key={tile.item.label}
-          onClick={() => onSelect(activeLabel === tile.item.label ? "" : tile.item.label)}
-          style={{
-            backgroundColor: tile.item.color,
-            height: `${tile.height}%`,
-            left: `${tile.x}%`,
-            top: `${tile.y}%`,
-            width: `${tile.width}%`,
-          }}
-          title={`${tile.item.label} · ${formatDuration(tile.item.secondsSpent)} · ${formatShare(tile.item.secondsSpent, totalSeconds)}`}
-          type="button"
-        >
-          <span>{tile.item.label}</span>
-          <strong>{formatShare(tile.item.secondsSpent, totalSeconds)}</strong>
-        </button>
-      ))}
-    </div>
-  );
-}
-
-type WorklogTreemapItem = WorklogChartDatum;
-type WorklogTreemapTile = {
-  item: WorklogTreemapItem;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-};
-
-function getTreemapTiles(data: WorklogTreemapItem[], totalSeconds: number): WorklogTreemapTile[] {
-  const items = data.filter((item) => item.secondsSpent > 0);
-  const total = totalSeconds || items.reduce((sum, item) => sum + item.secondsSpent, 0);
-
-  if (items.length === 0 || total <= 0) {
-    return [];
-  }
-
-  return layoutTreemapItems(items, total, { x: 0, y: 0, width: 100, height: 100 });
-}
-
-function layoutTreemapItems(
-  items: WorklogTreemapItem[],
-  totalSeconds: number,
-  rect: { x: number; y: number; width: number; height: number }
-): WorklogTreemapTile[] {
-  if (items.length === 0) {
-    return [];
-  }
-
-  if (items.length === 1) {
-    return [{ item: items[0], ...rect }];
-  }
-
-  const [first, ...rest] = items;
-  const firstShare = first.secondsSpent / totalSeconds;
-  const restTotal = totalSeconds - first.secondsSpent;
-
-  if (rect.width >= rect.height) {
-    const firstWidth = rect.width * firstShare;
-    return [
-      { item: first, x: rect.x, y: rect.y, width: firstWidth, height: rect.height },
-      ...layoutTreemapItems(rest, restTotal, {
-        x: rect.x + firstWidth,
-        y: rect.y,
-        width: rect.width - firstWidth,
-        height: rect.height,
-      }),
-    ];
-  }
-
-  const firstHeight = rect.height * firstShare;
-  return [
-    { item: first, x: rect.x, y: rect.y, width: rect.width, height: firstHeight },
-    ...layoutTreemapItems(rest, restTotal, {
-      x: rect.x,
-      y: rect.y + firstHeight,
-      width: rect.width,
-      height: rect.height - firstHeight,
-    }),
-  ];
 }
 
 function formatDuration(totalSeconds: number) {

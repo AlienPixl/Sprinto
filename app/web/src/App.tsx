@@ -166,7 +166,7 @@ export function App() {
   useEffect(() => {
     const nextTheme = normalizeTheme(previewTheme ?? user?.theme ?? readStoredThemePreference());
     document.documentElement.dataset.theme = nextTheme;
-    document.documentElement.style.colorScheme = nextTheme === "timero" ? "light" : "dark";
+    document.documentElement.style.colorScheme = nextTheme === "glow" ? "light" : "dark";
     window.localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
   }, [previewTheme, user?.theme]);
 
