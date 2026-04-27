@@ -911,7 +911,7 @@ export function App() {
   }
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${view === "room" ? "app-shell--room" : ""}`.trim()}>
       <header className="topbar">
         <button
           className="topbar__brand topbar__brand--button"
@@ -1050,7 +1050,7 @@ export function App() {
         </div>
       ) : null}
 
-      <main className="app-main">
+      <main className={`app-main ${view === "room" ? "app-main--room" : ""}`.trim()}>
         {view === "admin" && canAccessAdmin ? (
           <AdminPanel
             onCreateRole={handleCreateRole}

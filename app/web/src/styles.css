@@ -36,8 +36,21 @@ body {
   flex-direction: column;
 }
 
+.app-shell--room {
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+}
+
 .app-main {
-  flex: 1;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-main--room {
+  overflow: hidden;
 }
 
 .app-auth-notice {
@@ -306,6 +319,15 @@ input[type="number"]::-webkit-inner-spin-button {
 .room-screen {
   padding-top: 0.8rem;
   padding-bottom: 0.45rem;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.page-shell.room-screen {
+  flex: 1 1 auto;
+  overflow: hidden;
 }
 
 .app-footer {
@@ -1379,10 +1401,20 @@ button:disabled {
 
 .room-board {
   margin-top: 0.8rem;
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .poker-stage {
   padding: 0.9rem;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .table-felt {
@@ -1627,6 +1659,8 @@ button:disabled {
   grid-template-columns: 180px minmax(0, 1fr);
   gap: 0.75rem;
   align-items: stretch;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .room-admin-layout > * {
@@ -1642,6 +1676,7 @@ button:disabled {
   overflow: visible;
   position: relative;
   z-index: 5;
+  min-height: 0;
 }
 
 .controls-panel .controls-inline button,
@@ -1658,9 +1693,10 @@ button:disabled {
 .queue-panel {
   display: flex;
   flex-direction: column;
-  min-height: 100%;
-  height: var(--queue-panel-sync-height, clamp(360px, 42vh, 520px));
-  max-height: var(--queue-panel-sync-height, clamp(360px, 42vh, 520px));
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+  max-height: none;
   overflow: hidden;
 }
 
@@ -1705,18 +1741,19 @@ button:disabled {
   justify-content: flex-end;
   gap: 0.35rem;
   min-width: 0;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
 }
 
 .queue-toolbar__control {
   min-width: 0;
   display: inline-flex;
   align-items: center;
-  flex: 1 1 140px;
+  flex: 0 1 132px;
   gap: 0.28rem;
   padding: 0.2rem 0.42rem;
   border-radius: 999px;
-  background: rgba(249, 243, 223, 0.06);
+  background: rgba(249, 243, 223, 0.08);
+  border: 1px solid rgba(249, 243, 223, 0.08);
   max-width: 100%;
 }
 
@@ -1742,9 +1779,16 @@ button:disabled {
   padding: 0.18rem 1.35rem 0.18rem 0.1rem;
   border: 0;
   background: transparent;
+  background-color: transparent;
   color: inherit;
   font-size: 0.78rem;
   box-shadow: none;
+  color-scheme: light;
+}
+
+.queue-toolbar__control select option {
+  color: #223228;
+  background: #f8f2e7;
 }
 
 .queue-divider {
@@ -1761,6 +1805,7 @@ button:disabled {
   flex: 1 1 auto;
   min-height: 0;
   align-content: start;
+  padding-bottom: 0.35rem;
 }
 
 .queue-list__empty {
@@ -1886,6 +1931,9 @@ button:disabled {
   gap: 0.45rem;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
+  position: relative;
+  z-index: 1;
 }
 
 .queue-pagination button {
@@ -1907,6 +1955,8 @@ button:disabled {
   gap: 0.45rem;
   flex: 0 0 auto;
   margin-left: auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .queue-pagination__pill {
@@ -1929,6 +1979,16 @@ button:disabled {
 
 .queue-pagination--single {
   justify-content: space-between;
+}
+
+@media (max-width: 1180px) {
+  .queue-pagination {
+    align-items: flex-start;
+  }
+
+  .queue-pagination__meta {
+    width: 100%;
+  }
 }
 
 @keyframes queue-panel-slide-in {
@@ -5647,7 +5707,24 @@ html[data-theme="glow"] .settings-subcategory__divider {
 }
 
 @media (max-width: 640px) {
+  .app-shell--room {
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
+  }
+
+  .app-main--room,
+  .page-shell.room-screen,
+  .room-board {
+    overflow: visible;
+  }
+
+  .poker-stage {
+    overflow: visible;
+  }
+
   .page-shell.room-screen {
+    flex: 0 0 auto;
     padding-bottom: 5.5rem;
   }
 
@@ -6886,7 +6963,18 @@ select:disabled {
   }
 
   .queue-toolbar {
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.3rem;
+  }
+
+  .queue-toolbar__control {
+    min-width: 0;
+    padding-inline: 0.34rem;
+  }
+
+  .queue-toolbar__control select {
+    max-width: none;
+    font-size: 0.76rem;
   }
 }
 
@@ -7722,6 +7810,11 @@ html[data-theme="glow"] .queue-toolbar__icon {
 
 html[data-theme="glow"] .queue-toolbar__control select {
   color: #223228;
+}
+
+html[data-theme="glow"] .queue-toolbar__control select option {
+  color: #223228;
+  background: #fff8ef;
 }
 
 html[data-theme="glow"] .queue-item__meta span {

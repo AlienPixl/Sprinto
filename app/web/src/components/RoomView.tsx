@@ -1,4 +1,4 @@
-import { CSSProperties, FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Issue, IssueEvent, IssueQueueItem, JiraAssignableUser, JiraBoard, JiraImportFilters, JiraImportPreviewIssue, JiraImportSyncResult, JiraIntegrationSettings, JiraSprint, Participant, RoomSnapshot, Vote } from "../lib/types";
 
 type HighlightMode = "none" | "most-frequent" | "highest";
@@ -147,8 +147,8 @@ export function RoomView({
   jiraIntegration,
   requireStoryId
 }: RoomViewProps) {
-  const QUEUE_PAGE_SIZE = 5;
-  const HISTORY_PAGE_SIZE = 6;
+  const DEFAULT_QUEUE_PAGE_SIZE = 5;
+  const DEFAULT_HISTORY_PAGE_SIZE = 6;
   const [queuedStoryId, setQueuedStoryId] = useState("");
   const [queuedIssueTitle, setQueuedIssueTitle] = useState("");
   const [editingQueueIssueId, setEditingQueueIssueId] = useState<string | null>(null);
@@ -218,12 +218,16 @@ export function RoomView({
   const timelineTrackRef = useRef<HTMLDivElement | null>(null);
   const draggingTimelineRef = useRef(false);
   const highlightMenuRef = useRef<HTMLDivElement | null>(null);
-  const controlsPanelRef = useRef<HTMLDivElement | null>(null);
   const jiraAssigneePickerRef = useRef<HTMLDivElement | null>(null);
   const jiraAssigneeSearchInputRef = useRef<HTMLInputElement | null>(null);
   const jiraAssigneeOptionsCacheRef = useRef<Record<string, JiraAssignableUser[]>>({});
   const jiraFetchAssignableUsersRef = useRef(onFetchJiraAssignableUsers);
-  const [queuePanelHeight, setQueuePanelHeight] = useState<number | null>(null);
+  const queueListRef = useRef<HTMLDivElement | null>(null);
+  const historyListRef = useRef<HTMLDivElement | null>(null);
+  const queuePaginationRef = useRef<HTMLDivElement | null>(null);
+  const historyPaginationRef = useRef<HTMLDivElement | null>(null);
+  const [queuePageSize, setQueuePageSize] = useState(DEFAULT_QUEUE_PAGE_SIZE);
+  const [historyPageSize, setHistoryPageSize] = useState(DEFAULT_HISTORY_PAGE_SIZE);
 
   useEffect(() => {
     jiraFetchAssignableUsersRef.current = onFetchJiraAssignableUsers;
@@ -412,12 +416,12 @@ export function RoomView({
     () => buildQueueDisplayItems(snapshot, queueFilter, queueSort),
     [queueFilter, queueSort, snapshot]
   );
-  const queuePageCount = Math.max(1, Math.ceil(queueDisplayItems.length / QUEUE_PAGE_SIZE));
-  const pagedQueue = queueDisplayItems.slice(queuePage * QUEUE_PAGE_SIZE, (queuePage + 1) * QUEUE_PAGE_SIZE);
-  const queuePlaceholderCount = Math.max(0, QUEUE_PAGE_SIZE - pagedQueue.length);
-  const historyPageCount = Math.max(1, Math.ceil(issuesForHistory.length / HISTORY_PAGE_SIZE));
-  const pagedHistory = issuesForHistory.slice(historyPage * HISTORY_PAGE_SIZE, (historyPage + 1) * HISTORY_PAGE_SIZE);
-  const historyPlaceholderCount = Math.max(0, HISTORY_PAGE_SIZE - pagedHistory.length);
+  const queuePageCount = Math.max(1, Math.ceil(queueDisplayItems.length / queuePageSize));
+  const pagedQueue = queueDisplayItems.slice(queuePage * queuePageSize, (queuePage + 1) * queuePageSize);
+  const queuePlaceholderCount = Math.max(0, queuePageSize - pagedQueue.length);
+  const historyPageCount = Math.max(1, Math.ceil(issuesForHistory.length / historyPageSize));
+  const pagedHistory = issuesForHistory.slice(historyPage * historyPageSize, (historyPage + 1) * historyPageSize);
+  const historyPlaceholderCount = Math.max(0, historyPageSize - pagedHistory.length);
   const selectedVote = snapshot.room.currentIssue.votes[currentUserId]?.value ?? null;
   const canReveal = snapshot.room.status === "voting" && !snapshot.room.revealed;
   const canStartNextIssue = snapshot.room.status !== "voting" && issueQueue.length > 0;
@@ -697,26 +701,89 @@ export function RoomView({
   }, [jiraActionAutoOpenAfterReveal]);
 
   useEffect(() => {
-    const element = controlsPanelRef.current;
-    if (!element || typeof ResizeObserver === "undefined") {
+    const queueListElement = queueListRef.current;
+    const historyListElement = historyListRef.current;
+    const queuePaginationElement = queuePaginationRef.current;
+    const historyPaginationElement = historyPaginationRef.current;
+    if (typeof ResizeObserver === "undefined") {
       return;
     }
 
-    const updateHeight = () => {
-      const nextHeight = Math.ceil(element.getBoundingClientRect().height);
-      setQueuePanelHeight(Number.isFinite(nextHeight) && nextHeight > 0 ? nextHeight : null);
+    const measureCapacity = (
+      element: HTMLDivElement,
+      paginationElement: HTMLDivElement | null,
+      itemSelector: string,
+      fallback: number,
+      apply: (next: number) => void
+    ) => {
+      const computedStyle = window.getComputedStyle(element);
+      const gap = Number.parseFloat(computedStyle.rowGap || computedStyle.gap || "0") || 0;
+      const item = element.querySelector<HTMLElement>(itemSelector);
+      const footer = document.querySelector<HTMLElement>(".app-footer");
+      if (!item) {
+        apply(fallback);
+        return;
+      }
+
+      const itemHeight = item.getBoundingClientRect().height;
+      const listRect = element.getBoundingClientRect();
+      const paginationRect = paginationElement?.getBoundingClientRect();
+      const footerStyle = footer ? window.getComputedStyle(footer) : null;
+      const footerMarginTop = footerStyle ? Number.parseFloat(footerStyle.marginTop || "0") || 0 : 0;
+      const footerMarginBottom = footerStyle ? Number.parseFloat(footerStyle.marginBottom || "0") || 0 : 0;
+      const footerHeight = footer ? footer.getBoundingClientRect().height : 0;
+      const reservedHeight = (paginationRect?.height || 0) + 10;
+      const footerReserve = footerHeight + footerMarginTop + footerMarginBottom;
+      const viewportBottom = window.innerHeight - footerReserve;
+      const availableHeight = Math.max(0, viewportBottom - listRect.top - reservedHeight);
+      if (!Number.isFinite(itemHeight) || itemHeight <= 0 || !Number.isFinite(availableHeight) || availableHeight <= 0) {
+        apply(fallback);
+        return;
+      }
+
+      const next = Math.max(1, Math.floor((availableHeight + gap) / (itemHeight + gap)));
+      apply(next);
     };
 
-    updateHeight();
-    const observer = new ResizeObserver(() => updateHeight());
-    observer.observe(element);
-    window.addEventListener("resize", updateHeight);
+    const updateQueueCapacity = () => {
+      if (queueListElement) {
+        measureCapacity(queueListElement, queuePaginationElement, ".queue-item:not(.queue-item--placeholder)", DEFAULT_QUEUE_PAGE_SIZE, (next) =>
+          setQueuePageSize((current) => (current === next ? current : next))
+        );
+      }
+    };
+
+    const updateHistoryCapacity = () => {
+      if (historyListElement) {
+        measureCapacity(historyListElement, historyPaginationElement, ".queue-option-item:not(.queue-option-item--placeholder)", DEFAULT_HISTORY_PAGE_SIZE, (next) =>
+          setHistoryPageSize((current) => (current === next ? current : next))
+        );
+      }
+    };
+
+    updateQueueCapacity();
+    updateHistoryCapacity();
+
+    const observer = new ResizeObserver(() => {
+      updateQueueCapacity();
+      updateHistoryCapacity();
+    });
+
+    if (queueListElement) observer.observe(queueListElement);
+    if (historyListElement) observer.observe(historyListElement);
+    if (queuePaginationElement) observer.observe(queuePaginationElement);
+    if (historyPaginationElement) observer.observe(historyPaginationElement);
+    const footer = document.querySelector<HTMLElement>(".app-footer");
+    if (footer) observer.observe(footer);
+    window.addEventListener("resize", updateQueueCapacity);
+    window.addEventListener("resize", updateHistoryCapacity);
 
     return () => {
       observer.disconnect();
-      window.removeEventListener("resize", updateHeight);
+      window.removeEventListener("resize", updateQueueCapacity);
+      window.removeEventListener("resize", updateHistoryCapacity);
     };
-  }, [canManageRound, canImportJiraIssues, canSendToJira, canDeleteRoom, canViewHistory, canManageCardHighlight, snapshot.room.status]);
+  }, [historyOpen, pagedHistory.length, pagedQueue.length, queueFilter, queueSort, queuePageCount, historyPageCount]);
 
   useEffect(() => {
     setAnimatedParticipants((current) => {
@@ -1277,7 +1344,7 @@ export function RoomView({
 
           {(canManageRound || canDeleteRoom || canManageCardHighlight) && !isHistoryPreview ? (
             <div className={`room-admin-layout ${canManageRound ? "" : "room-admin-layout--controls-only"}`.trim()}>
-              <div className="card card--compact controls-panel" ref={controlsPanelRef}>
+              <div className="card card--compact controls-panel">
                 <div className="controls-inline controls-inline--stacked">
                   {canManageRound ? (
                     <>
@@ -1321,14 +1388,7 @@ export function RoomView({
               </div>
 
               {canManageRound ? (
-              <div
-                className="card card--compact queue-panel"
-                style={
-                  queuePanelHeight && !isQueueOverlayOpen
-                    ? ({ "--queue-panel-sync-height": `${queuePanelHeight}px` } as CSSProperties)
-                    : undefined
-                }
-              >
+              <div className="card card--compact queue-panel">
                 {!isQueueOverlayOpen ? (
                   <div className="queue-panel__default-content">
                     <form className="stack-form" onSubmit={handleQueueIssue}>
@@ -1784,7 +1844,7 @@ export function RoomView({
                         <p>Choose how Sprinto should highlight revealed cards.</p>
                       </div>
                     </div>
-                    <div className="queue-option-list">
+                    <div className="queue-option-list" ref={historyListRef}>
                       {HIGHLIGHT_OPTIONS.map((option) => (
                         <button
                           className={`queue-option-item ${highlightMode === option.value ? "is-selected" : ""}`}
@@ -1840,7 +1900,7 @@ export function RoomView({
                         <div aria-hidden="true" className="queue-option-item queue-option-item--placeholder" key={`history-placeholder-${historyPage}-${index}`} />
                       ))}
                     </div>
-                    <div className={`queue-pagination ${historyPageCount <= 1 ? "queue-pagination--single" : ""}`}>
+                    <div className={`queue-pagination ${historyPageCount <= 1 ? "queue-pagination--single" : ""}`} ref={historyPaginationRef}>
                       <div className="queue-pagination__spacer" aria-hidden="true" />
                       <div className="queue-pagination__meta">
                         {historyPageCount > 1 ? (
@@ -1865,7 +1925,7 @@ export function RoomView({
                   </div>
                 ) : (
                   <>
-                    <div className="queue-list">
+                    <div className="queue-list" ref={queueListRef}>
                       {pagedQueue.length === 0 ? (
                         <p className="queue-list__empty">
                           {queueFilter === "completed"
@@ -2006,8 +2066,8 @@ export function RoomView({
                         <div aria-hidden="true" className="queue-item queue-item--placeholder" key={`queue-placeholder-${queuePage}-${index}`} />
                       ))}
                     </div>
-                    {queueDisplayItems.length > QUEUE_PAGE_SIZE ? (
-                  <div className="queue-pagination">
+                    {queueDisplayItems.length > queuePageSize ? (
+                  <div className="queue-pagination" ref={queuePaginationRef}>
                     {jiraMessage ? (
                       <span className={`queue-pagination__notice queue-pagination__notice--${jiraMessageTone}`}>
                         {jiraMessage}
@@ -2030,7 +2090,7 @@ export function RoomView({
                     </div>
                   </div>
                     ) : (
-                      <div className="queue-pagination queue-pagination--single">
+                      <div className="queue-pagination queue-pagination--single" ref={queuePaginationRef}>
                         {jiraMessage ? (
                           <span className={`queue-pagination__notice queue-pagination__notice--${jiraMessageTone}`}>
                             {jiraMessage}
@@ -3156,24 +3216,23 @@ function LinkIcon() {
 
 function FilterIcon() {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M4 6h16" />
-      <path d="M7 12h10" />
-      <path d="M10 18h4" />
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M5 7.5h14" />
+      <path d="M5 12h8" />
+      <path d="M5 16.5h11" />
+      <circle cx="17.5" cy="12" r="1.5" fill="currentColor" stroke="none" />
+      <circle cx="16" cy="16.5" r="1.5" fill="currentColor" stroke="none" />
     </svg>
   );
 }
 
 function SortIcon() {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="m8 6-3 3-3-3" />
-      <path d="M5 9V4" />
-      <path d="m16 18 3-3 3 3" />
-      <path d="M19 15v5" />
-      <path d="M11 6h3" />
-      <path d="M11 12h6" />
-      <path d="M11 18h9" />
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M7 6v12" />
+      <path d="m4.5 8.5 2.5-2.5 2.5 2.5" />
+      <path d="m14.5 15.5 2.5 2.5 2.5-2.5" />
+      <path d="M17 6v12" />
     </svg>
   );
 }
