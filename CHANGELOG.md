@@ -4,6 +4,7 @@ Public release notes for Sprinto.
 
 ## Releases
 
+- [v1.3.2](changelog/v1.3.2.md)
 - [v1.3.1](changelog/v1.3.1.md)
 - [v1.3.0](changelog/v1.3.0.md)
 - [v1.2.0](changelog/v1.2.0.md)

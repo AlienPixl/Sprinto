@@ -732,7 +732,7 @@ export function RoomView({
       const footerMarginTop = footerStyle ? Number.parseFloat(footerStyle.marginTop || "0") || 0 : 0;
       const footerMarginBottom = footerStyle ? Number.parseFloat(footerStyle.marginBottom || "0") || 0 : 0;
       const footerHeight = footer ? footer.getBoundingClientRect().height : 0;
-      const reservedHeight = (paginationRect?.height || 0) + 10;
+      const reservedHeight = (paginationRect?.height || 0) + 28;
       const footerReserve = footerHeight + footerMarginTop + footerMarginBottom;
       const viewportBottom = window.innerHeight - footerReserve;
       const availableHeight = Math.max(0, viewportBottom - listRect.top - reservedHeight);
