@@ -497,6 +497,21 @@ export function RoomView({
   );
   const isQueueOverlayOpen = jiraActionOpen || jiraOpen || historyOpen || highlightMenuOpen;
 
+  function openExternalUrl(url?: string | null) {
+    if (!url || typeof window === "undefined") return;
+    try {
+      const a = document.createElement("a");
+      a.href = url;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      // some browsers may block programmatic clicks; this is a user-initiated handler so should be fine
+      a.click();
+    } catch (e) {
+      // fallback
+      window.open(url, "_blank");
+    }
+  }
+
   function resetJiraActionForm(strategy: JiraSuggestionStrategy = "highest") {
     const suggestedStoryPoints = suggestJiraStoryPoints(jiraActionIssue, snapshot.room.deck, strategy);
     const suggestedStoryPointsLabel = formatJiraNumber(suggestedStoryPoints);
@@ -1215,8 +1230,26 @@ export function RoomView({
               <strong title={snapshot.room.name}>{snapshot.room.name}</strong>
             </div>
             <div className="issue-banner">
-              <span className="issue-banner__label">{isHistoryPreview ? "History issue" : "Current issue"}</span>
-              <strong title={displayIssue.title}>{displayIssue.title}</strong>
+              <div className="issue-banner__content">
+                <span className="issue-banner__label">{isHistoryPreview ? "History issue" : "Current issue"}</span>
+                <strong title={displayIssue.title}>{displayIssue.title}</strong>
+              </div>
+              {displayIssue.externalSource === "jira" && displayIssue.externalIssueUrl ? (
+                <button
+                  type="button"
+                  aria-label={displayIssue.externalIssueKey ? `Open ${displayIssue.externalIssueKey} in Jira` : "Open external issue in Jira"}
+                  onClick={() => openExternalUrl(displayIssue.externalIssueUrl)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      openExternalUrl(displayIssue.externalIssueUrl);
+                    }
+                  }}
+                  className="queue-item__icon issue-banner__icon"
+                >
+                  <LinkIcon />
+                </button>
+              ) : null}
             </div>
             <div className="round-inline round-inline--round">
               <span>Round</span>
@@ -1250,7 +1283,25 @@ export function RoomView({
             <div className="issue-strip-mobile__summary">
               <div className="issue-strip-mobile__row">
                 <span>{isHistoryPreview ? "History issue" : "Current issue"}:</span>
-                <strong title={displayIssue.title}>{displayIssue.title}</strong>
+                <div className="issue-strip-mobile__title-row">
+                  <strong title={displayIssue.title}>{displayIssue.title}</strong>
+                  {displayIssue.externalSource === "jira" && displayIssue.externalIssueUrl ? (
+                    <button
+                      type="button"
+                      aria-label={displayIssue.externalIssueKey ? `Open ${displayIssue.externalIssueKey} in Jira` : "Open external issue in Jira"}
+                      onClick={() => openExternalUrl(displayIssue.externalIssueUrl)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          openExternalUrl(displayIssue.externalIssueUrl);
+                        }
+                      }}
+                      className="queue-item__icon issue-link-icon issue-link-icon--mobile"
+                    >
+                      <LinkIcon />
+                    </button>
+                  ) : null}
+                </div>
               </div>
               <div className="issue-strip-mobile__inline">
                 <div className="issue-strip-mobile__metric">

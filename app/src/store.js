@@ -1599,16 +1599,19 @@ export async function getRoom(roomId, currentUserId) {
   const roomResult = await query("select r.*, d.name as deck_name, d.values_json from rooms r join decks d on d.id = r.deck_id where r.id = $1 limit 1", [roomId]);
   const room = roomResult.rows[0];
   if (!room) return null;
-  const [participantsResult, activeIssueResult, doneIssueResult, queueResult] = await Promise.all([
+    const [participantsResult, activeIssueResult, doneIssueResult, queueResult] = await Promise.all([
     query(`
       select
         u.id,
         u.display_name,
-        array_remove(array_agg(distinct r.name), null) as roles
+        array_remove(array_agg(distinct r.name), null) as roles,
+        array_remove(array_agg(distinct p.code), null) as permission_codes
       from room_presence rp
       join users u on u.id = rp.user_id
       left join user_roles ur on ur.user_id = u.id
       left join roles r on r.id = ur.role_id
+      left join role_permissions role_perm on role_perm.role_id = r.id
+      left join permissions p on p.id = role_perm.permission_id
       where rp.room_id = $1 and rp.left_at is null
       group by u.id, u.display_name
       order by u.display_name
@@ -1636,12 +1639,13 @@ export async function getRoom(roomId, currentUserId) {
         : null,
     participants: participantsResult.rows.map((row) => {
       const { firstName, lastName } = parseNameParts(row.display_name);
+      const externalPermissions = mapPermissionCodesToNames(row.permission_codes || []);
       return {
         id: row.id,
         firstName,
         lastName,
         voted: votesByUser.has(row.id),
-        canVote: canUserVote(row.roles),
+        canVote: externalPermissions.includes("vote"),
       };
     }),
     queue: queueResult.rows.map((row) => ({ id: row.id, title: row.title, source: row.source, position: row.queue_position })),
@@ -3211,11 +3215,14 @@ export async function getRoomSnapshot(roomId, currentUserId) {
       select
         u.id,
         u.display_name,
-        array_remove(array_agg(distinct r.name), null) as roles
+        array_remove(array_agg(distinct r.name), null) as roles,
+        array_remove(array_agg(distinct p.code), null) as permission_codes
       from room_presence rp
       join users u on u.id = rp.user_id
       left join user_roles ur on ur.user_id = u.id
       left join roles r on r.id = ur.role_id
+      left join role_permissions role_perm on role_perm.role_id = r.id
+      left join permissions p on p.id = role_perm.permission_id
       where rp.room_id = $1 and rp.left_at is null
       group by u.id, u.display_name
       order by u.display_name
@@ -3256,11 +3263,14 @@ export async function getRoomSnapshot(roomId, currentUserId) {
             ie.payload_json,
             ie.created_at,
             u.display_name,
-            array_remove(array_agg(distinct r.name), null) as roles
+            array_remove(array_agg(distinct r.name), null) as roles,
+            array_remove(array_agg(distinct p.code), null) as permission_codes
           from issue_events ie
           left join users u on u.id = ie.user_id
           left join user_roles ur on ur.user_id = u.id
           left join roles r on r.id = ur.role_id
+          left join role_permissions role_perm on role_perm.role_id = r.id
+          left join permissions p on p.id = role_perm.permission_id
           where ie.issue_id = any($1::text[])
           group by
             ie.issue_id,
@@ -3324,7 +3334,7 @@ export async function getRoomSnapshot(roomId, currentUserId) {
               occurredAt: issueOccurredAt(issueRow, event),
               participantId: event.user_id || undefined,
               participantName: event.display_name || undefined,
-              participantCanVote: event.user_id ? canUserVote(event.roles) : undefined,
+              participantCanVote: event.user_id ? mapPermissionCodesToNames(event.permission_codes || []).includes("vote") : undefined,
               value: event.payload_json?.value,
             }))
           : playbackEvents.map((event) => ({
@@ -3366,7 +3376,7 @@ export async function getRoomSnapshot(roomId, currentUserId) {
           firstName,
           lastName,
           voted: Boolean(currentVotes[participant.id]),
-          canVote: canUserVote(participant.roles),
+          canVote: mapPermissionCodesToNames(participant.permission_codes || []).includes("vote"),
         };
       }),
       currentIssue,
