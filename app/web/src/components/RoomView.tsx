@@ -2644,7 +2644,10 @@ function buildTimelineLayout(issue: Issue, events: IssueEvent[]): TimelineLayout
   const eventsLayout = events.map((event, index) => {
     const title = timelineTitle(event);
     const time = formatTimelineTime(event.occurredAt, issue.startedAt);
-    const positionPercent = eventOffsetPercent(event, issue);
+    const positionPercent =
+      events.length > 0
+        ? TIMELINE_START + ((index + 1) / (events.length + 1)) * (TIMELINE_END - TIMELINE_START)
+        : eventOffsetPercent(event, issue);
     const labelMetrics = estimateTimelineLabelMetrics(title, time);
     const interval = intervalFromTimelineLabel(positionPercent, labelMetrics.widthPercent);
     const defaultSide: TimelineMarkerSide = index % 2 === 0 ? "below" : "above";

@@ -26,3 +26,16 @@ Krátké souhrnné kontexty pro asistenty (AI) a automatizace při práci s tím
 
 ## Poznámky
 - Tyto kontexty slouží jako rychlá nápověda pro agenty; obsah upravuj při dalších UI/back-end změnách.
+
+## Nové kontexty (v1.4.1)
+
+- Fix: Timeline density — události v historii a v PDF reportech se nyní rozkládají rovnoměrně mezi `Start` a `Reveal`, aby se předešlo hromadění hlasovacích bodů v jednom místě. To zlepšuje čitelnost větších kol, kde většina účastníků hlasuje téměř současně.
+- Implementováno ve frontendu: `app/web/src/components/RoomView.tsx` (funkce `buildTimelineLayout` — pozice událostí nyní používá indexové rozložení pro vizuální přehlednost).
+- Implementováno v PDF exportu: `app/src/jira.js` (funkce `buildPdfTimelineLayout` — pozice markerů pro PDF je nyní rovnoměrně rozmístěna po stopě).
+- Poznámka pro agenty: i když jsou události vizuálně rozložené, sekvenční pořadí událostí zůstává chronologické; pokud je potřeba zachovat časový poměr, zvažte přidání přepínače `preserveTimestamps`.
+
+### Ověření
+- Otevřít místní vývojový build a spustit pár historických reportů s hustými hlasovacími koly. Zkontrolovat, že body nejsou přilepené na začátku nebo konci, ale rovnoměrně rozprostřené mezi `Start` a `Reveal`.
+- Zkontrolovat PDF export přes `Send to Jira` a ověřit, že timeline v připojeném PDF odpovídá vizuálnímu rozložení v UI.
+
+Tyto kontexty přidejte do tréninkových promptů nebo CI kontrol, které generují automatické changelogy nebo vědomostní bází pro asistenty.

@@ -1370,9 +1370,7 @@ function buildPdfTimelineLayout(events, report, fonts, x, width, startedAt, rang
   const startInterval = pdfTimelineInterval(start.markerX, start.labelWidth, x, width);
   const revealInterval = pdfTimelineInterval(reveal.markerX, reveal.labelWidth, x, width);
   const eventLayouts = events.map((event, index) => {
-    const eventAt = new Date(event.occurredAt || report.sentAt || Date.now()).getTime();
-    const ratio = Math.max(0, Math.min(1, (eventAt - startedAt) / range));
-    const markerX = trackStartX + ratio * (trackEndX - trackStartX);
+    const markerX = trackStartX + ((index + 1) / (events.length + 1)) * (trackEndX - trackStartX);
     const title = timelineEventTitle(event);
     const time = formatTimeOnly(event.occurredAt);
     const labelWidth = estimatePdfTimelineLabelWidth(title, time, fonts);
