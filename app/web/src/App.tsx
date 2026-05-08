@@ -60,8 +60,12 @@ import {
   updateAdminSettings,
   updateAdminUpdateSettings,
   updateAdminRoomSettings,
+  createRoomCategory,
+  updateRoomCategory,
+  deleteRoomCategory,
   updateDeck,
   updateRoomHighlightMode,
+  renameRoom,
   updateQueuedIssue,
   updateRole,
   updateUser,
@@ -452,8 +456,8 @@ export function App() {
     beginMicrosoftEntraLogin(`${window.location.pathname}${window.location.search}`);
   }
 
-  async function handleCreateRoom(name: string, deckName: string) {
-    const room = await createRoomWithDeck(name, "", deckName);
+  async function handleCreateRoom(name: string, deckName: string, categoryId: string) {
+    const room = await createRoomWithDeck(name, "", deckName, categoryId || undefined);
     await refreshRooms();
     await openRoom(room.id);
   }
@@ -653,6 +657,24 @@ export function App() {
     setDecks(next.decks);
   }
 
+  async function handleCreateRoomCategory(name: string) {
+    const next = await createRoomCategory(name);
+    setOverview(next);
+    setSettings(next.settings);
+  }
+
+  async function handleUpdateRoomCategory(categoryId: string, name: string) {
+    const next = await updateRoomCategory(categoryId, name);
+    setOverview(next);
+    setSettings(next.settings);
+  }
+
+  async function handleDeleteRoomCategory(categoryId: string) {
+    const next = await deleteRoomCategory(categoryId);
+    setOverview(next);
+    setSettings(next.settings);
+  }
+
   async function handleCreateUser(payload: {
     username: string;
     displayName: string;
@@ -784,6 +806,13 @@ export function App() {
     await handleLeaveActiveRoom();
     setView("dashboard");
     updateRoute({ view: "dashboard", roomId: null }, true);
+  }
+
+  async function handleRenameCurrentRoom(name: string) {
+    if (!activeRoomId) return;
+    const next = await renameRoom(activeRoomId, name);
+    setSnapshot(next);
+    await refreshRooms();
   }
 
   async function handleImportJiraIssues(
@@ -1077,6 +1106,9 @@ export function App() {
             onUpdateDeck={handleUpdateDeck}
             onUpdateUserRoles={handleUpdateUserRoles}
             onRefreshOverview={refreshAdminOverview}
+            onCreateRoomCategory={handleCreateRoomCategory}
+            onUpdateRoomCategory={handleUpdateRoomCategory}
+            onDeleteRoomCategory={handleDeleteRoomCategory}
             overview={overview}
             user={user}
           />
@@ -1088,6 +1120,9 @@ export function App() {
             defaultDeckName={effectiveSettings?.defaultDeck || ""}
             decks={decks}
             rooms={rooms}
+            roomCategories={effectiveSettings?.roomCategories || []}
+            roomCategoriesEnabled={effectiveSettings?.roomCategoriesEnabled || false}
+            roomCategoryRequired={effectiveSettings?.roomCategoryRequired || false}
             onOpenRoom={(roomId) => {
               void openRoom(roomId);
             }}
@@ -1114,8 +1149,11 @@ export function App() {
               user.permissions.includes("close_poker")
             }
             canManageCardHighlight={user.permissions.includes("highlight_cards")}
-            canViewHistory={user.permissions.includes("view_votes_of_others")}
+            canViewHistory={user.permissions.includes("view_history")}
+            canViewVotesOfOthers={user.permissions.includes("view_votes_of_others")}
             canDeleteRoom={user.permissions.includes("delete_room")}
+            canRenameRoom={user.permissions.includes("rename_room")}
+            onRenameRoom={handleRenameCurrentRoom}
             canImportJiraIssues={user.permissions.includes("jira_import_issues") && jiraIntegrationEnabled}
             canSendToJira={user.permissions.includes("jira_send") && jiraIntegrationEnabled}
             canVote={user.permissions.includes("vote")}

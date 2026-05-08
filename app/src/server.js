@@ -54,11 +54,16 @@ import {
   changePassword,
   closeRoom,
   createRoom,
+  createRoomCategory,
+  updateRoomCategory,
+  deleteRoomCategory,
+  listRoomCategoriesCompat,
   createSession,
   deleteDeck,
   deleteQueueIssue,
   deleteRole,
   deleteRoom,
+  renameRoom,
   deactivateUser,
   anonymizeUser,
   anonymizeDeactivatedUsersForScheduledTask,
@@ -878,6 +883,7 @@ function requireManageRoomSettings(req, res, next) {
   if (!req.user || !capabilitiesFor(req.user).canManageRoomSettings) return json(res, { error: "Forbidden" }, 403);
   next();
 }
+
 
 function requireManageDecks(req, res, next) {
   if (!req.user || !capabilitiesFor(req.user).canManageDecks) return json(res, { error: "Forbidden" }, 403);
@@ -1777,8 +1783,9 @@ app.post("/api/rooms", requireUser, async (req, res) => {
   if (!name) return json(res, { error: "Room name is required" }, 400);
   const decks = await listDecksCompat();
   const selectedDeck = decks.find((deck) => deck.name === req.body?.deckName) || decks.find((deck) => deck.isDefault) || decks[0];
-  const roomId = await createRoom({ userId: req.user.id, name, deckId: selectedDeck?.id });
-  await logAudit(req.user.id, "room.create", "room", { roomId, name });
+  const categoryId = String(req.body?.categoryId || "").trim() || null;
+  const roomId = await createRoom({ userId: req.user.id, name, deckId: selectedDeck?.id, categoryId });
+  await logAudit(req.user.id, "room.create", "room", { roomId, name, categoryId });
   await publishDashboard();
   await publishRoom(roomId);
   json(res, { id: roomId });
@@ -1904,6 +1911,19 @@ app.post("/api/rooms/:roomId/highlight", requireUser, async (req, res) => {
     const highlightMode = await updateRoomHighlightMode(req.params.roomId, req.body?.highlightMode);
     await logAudit(req.user.id, "room.highlight", "room", { roomId: req.params.roomId, highlightMode });
     await publishRoom(req.params.roomId);
+    json(res, await getRoomSnapshot(req.params.roomId, req.user.id));
+  } catch (error) {
+    json(res, { error: error.message }, 400);
+  }
+});
+
+app.post("/api/rooms/:roomId/rename", requireUser, async (req, res) => {
+  if (!capabilitiesFor(req.user).canRenameRoom) return json(res, { error: "Forbidden" }, 403);
+  try {
+    const newName = await renameRoom(req.params.roomId, req.body?.name);
+    await logAudit(req.user.id, "room.rename", "room", { roomId: req.params.roomId, name: newName });
+    await publishRoom(req.params.roomId);
+    await publishDashboard();
     json(res, await getRoomSnapshot(req.params.roomId, req.user.id));
   } catch (error) {
     json(res, { error: error.message }, 400);
@@ -2623,10 +2643,46 @@ app.put("/api/admin/settings/rooms", requireUser, requireManageRoomSettings, asy
     default_timer_seconds: Number(settings.defaultTimerSeconds) || 1,
     require_story_id: Boolean(settings.requireStoryId),
     default_deck_id: defaultDeck?.id || decks.find((deck) => deck.isDefault)?.id || decks[0]?.id,
+    room_categories_enabled: Boolean(settings.roomCategoriesEnabled),
+    room_category_required: Boolean(settings.roomCategoryRequired),
   });
 
   const nextSettings = sanitizeSettingsForAudit(await getSettingsCompat());
   await logAudit(req.user.id, "room_settings.update", "settings", buildAuditChangeSet(previousSettings, nextSettings));
+  json(res, await getAdminOverviewCompat(req.user));
+});
+
+app.get("/api/admin/room-categories", requireUser, requireManageRoomSettings, async (_req, res) => {
+  json(res, { roomCategories: await listRoomCategoriesCompat() });
+});
+
+app.post("/api/admin/room-categories", requireUser, requireManageRoomSettings, async (req, res) => {
+  const name = String(req.body?.name || "").trim();
+  if (!name) return json(res, { error: "Category name is required" }, 400);
+  try {
+    await createRoomCategory(name);
+  } catch (err) {
+    return json(res, { error: String(err?.message || "Failed to create category") }, 400);
+  }
+  await logAudit(req.user.id, "room_category.create", "room_category", { name });
+  json(res, await getAdminOverviewCompat(req.user));
+});
+
+app.put("/api/admin/room-categories/:categoryId", requireUser, requireManageRoomSettings, async (req, res) => {
+  const name = String(req.body?.name || "").trim();
+  if (!name) return json(res, { error: "Category name is required" }, 400);
+  try {
+    await updateRoomCategory(req.params.categoryId, name);
+  } catch (err) {
+    return json(res, { error: String(err?.message || "Failed to update category") }, 400);
+  }
+  await logAudit(req.user.id, "room_category.update", "room_category", { categoryId: req.params.categoryId, name });
+  json(res, await getAdminOverviewCompat(req.user));
+});
+
+app.delete("/api/admin/room-categories/:categoryId", requireUser, requireManageRoomSettings, async (req, res) => {
+  await deleteRoomCategory(req.params.categoryId);
+  await logAudit(req.user.id, "room_category.delete", "room_category", { categoryId: req.params.categoryId });
   json(res, await getAdminOverviewCompat(req.user));
 });
 

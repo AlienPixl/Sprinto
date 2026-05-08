@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { Issue, IssueEvent, IssueQueueItem, JiraAssignableUser, JiraBoard, JiraImportFilters, JiraImportPreviewIssue, JiraImportSyncResult, JiraIntegrationSettings, JiraSprint, Participant, RoomSnapshot, Vote } from "../lib/types";
+import { Issue, IssueEvent, IssueQueueItem, JiraAssignableUser, JiraBoard, JiraFilterConnector, JiraFilterOperator, JiraImportFilters, JiraImportPreviewIssue, JiraImportSyncResult, JiraIntegrationSettings, JiraSprint, Participant, RoomSnapshot, Vote } from "../lib/types";
 
 type HighlightMode = "none" | "most-frequent" | "highest";
 type JiraSuggestionStrategy = "highest" | "most-frequent" | "median" | "average";
@@ -99,11 +99,14 @@ type RoomViewProps = {
   canManageRound: boolean;
   canManageCardHighlight: boolean;
   canViewHistory: boolean;
+  canViewVotesOfOthers: boolean;
   canDeleteRoom: boolean;
+  canRenameRoom: boolean;
   canImportJiraIssues: boolean;
   canSendToJira: boolean;
   jiraIntegration?: JiraIntegrationSettings;
   requireStoryId: boolean;
+  onRenameRoom: (name: string) => Promise<void>;
 };
 
 const TIMELINE_MIN = -12;
@@ -141,11 +144,14 @@ export function RoomView({
   canManageRound,
   canManageCardHighlight,
   canViewHistory,
+  canViewVotesOfOthers,
   canDeleteRoom,
+  canRenameRoom,
   canImportJiraIssues,
   canSendToJira,
   jiraIntegration,
-  requireStoryId
+  requireStoryId,
+  onRenameRoom
 }: RoomViewProps) {
   const DEFAULT_QUEUE_PAGE_SIZE = 5;
   const DEFAULT_HISTORY_PAGE_SIZE = 6;
@@ -159,6 +165,9 @@ export function RoomView({
   const [closePokerConfirmOpen, setClosePokerConfirmOpen] = useState(false);
   const [roomDeleteOpen, setRoomDeleteOpen] = useState(false);
   const [roomDeleteBusy, setRoomDeleteBusy] = useState(false);
+  const [roomRenameOpen, setRoomRenameOpen] = useState(false);
+  const [roomRenameName, setRoomRenameName] = useState("");
+  const [roomRenameBusy, setRoomRenameBusy] = useState(false);
   const [selectedIssueId, setSelectedIssueId] = useState<string | null>(null);
   const [historyPlayback, setHistoryPlayback] = useState(100);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -178,8 +187,8 @@ export function RoomView({
   const [jiraMessage, setJiraMessage] = useState("");
   const [jiraMessageTone, setJiraMessageTone] = useState<"info" | "success" | "warning" | "error">("info");
   const [jiraFilters, setJiraFilters] = useState<JiraImportFilters>({
-    storyPointsEmpty: true,
-    originalEstimateEmpty: false,
+    conditions: [{ field: "storyPoints", operator: "IS EMPTY", value: null }],
+    connectors: [],
     importOrder: "issue-key",
   });
   const [queuePage, setQueuePage] = useState(0);
@@ -346,7 +355,7 @@ export function RoomView({
     return () => {
       document.body.style.overflow = previousOverflow;
     };
-  }, [jiraReimportOpen, jiraPreviewOpen, shareOpen, closePokerConfirmOpen, queueDeleteTarget, roomDeleteOpen]);
+  }, [jiraReimportOpen, jiraPreviewOpen, shareOpen, closePokerConfirmOpen, queueDeleteTarget, roomDeleteOpen, roomRenameOpen]);
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -375,12 +384,15 @@ export function RoomView({
         if (!roomDeleteBusy) {
           setRoomDeleteOpen(false);
         }
+        if (!roomRenameBusy) {
+          setRoomRenameOpen(false);
+        }
       }
     }
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [jiraActionAssigneeOpen, jiraPreviewOpen, jiraReimportOpen, queueDeleteBusy, roomDeleteBusy]);
+  }, [jiraActionAssigneeOpen, jiraPreviewOpen, jiraReimportOpen, queueDeleteBusy, roomDeleteBusy, roomRenameBusy]);
 
   useEffect(() => {
     return () => {
@@ -485,6 +497,10 @@ export function RoomView({
   const jiraActionFilteredAssigneeOptions = useMemo(
     () => filterJiraAssignableUsers(jiraActionAssigneeOptions, jiraActionAssigneeSearch),
     [jiraActionAssigneeOptions, jiraActionAssigneeSearch]
+  );
+  const jiraActionGroupedAssigneeOptions = useMemo(
+    () => groupJiraAssignableUsersByParticipants(jiraActionFilteredAssigneeOptions, snapshot.room.participants),
+    [jiraActionFilteredAssigneeOptions, snapshot.room.participants]
   );
   const selectedJiraBoard = useMemo(
     () => jiraBoards.find((board) => board.id === jiraBoardId) ?? null,
@@ -850,6 +866,7 @@ export function RoomView({
       if (!draggingTimelineRef.current || !timelineTrackRef.current || !isHistoryPreview) {
         return;
       }
+      event.preventDefault();
       setHistoryPlayback(playbackFromPointer(event.clientX, timelineTrackRef.current));
     }
 
@@ -857,7 +874,7 @@ export function RoomView({
       draggingTimelineRef.current = false;
     }
 
-    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointermove", handlePointerMove, { passive: false });
     window.addEventListener("pointerup", handlePointerUp);
     return () => {
       window.removeEventListener("pointermove", handlePointerMove);
@@ -1114,6 +1131,28 @@ export function RoomView({
     }
   }
 
+  function openRenameRoom() {
+    setRoomRenameName(snapshot.room.name);
+    setRoomRenameOpen(true);
+  }
+
+  function closeRenameRoom() {
+    if (roomRenameBusy) return;
+    setRoomRenameOpen(false);
+  }
+
+  async function confirmRenameRoom(event: React.FormEvent) {
+    event.preventDefault();
+    if (!roomRenameName.trim()) return;
+    setRoomRenameBusy(true);
+    try {
+      await onRenameRoom(roomRenameName.trim());
+      setRoomRenameOpen(false);
+    } finally {
+      setRoomRenameBusy(false);
+    }
+  }
+
   async function confirmClosePoker() {
     setClosePokerConfirmOpen(false);
     await onClose();
@@ -1223,11 +1262,35 @@ export function RoomView({
     <div className="page-shell room-screen">
       <section className="table-hero table-hero--room">
         <div>
-          <h1 className="room-screen__title">{snapshot.room.name}</h1>
+          <h1 className="room-screen__title">
+            <span>{snapshot.room.name}</span>
+            {canRenameRoom ? (
+              <button
+                aria-label="Rename room"
+                className="room-screen__rename-btn"
+                onClick={openRenameRoom}
+                type="button"
+              >
+                ✎
+              </button>
+            ) : null}
+          </h1>
           <div className="issue-strip issue-strip--desktop">
             <div className="round-inline round-inline--room">
               <span>Room</span>
-              <strong title={snapshot.room.name}>{snapshot.room.name}</strong>
+              <div className="room-screen__name-row">
+                <strong title={snapshot.room.name}>{snapshot.room.name}</strong>
+                {canRenameRoom ? (
+                  <button
+                    aria-label="Rename room"
+                    className="room-screen__rename-btn"
+                    onClick={openRenameRoom}
+                    type="button"
+                  >
+                    ✎
+                  </button>
+                ) : null}
+              </div>
             </div>
             <div className="issue-banner">
               <div className="issue-banner__content">
@@ -1340,39 +1403,45 @@ export function RoomView({
       <section className="room-board">
         <div className="poker-stage card card--compact">
           <div className="table-felt">
-            <div className="player-card-grid">
-              {displayedParticipants.map(({ participant, state }) => {
-                const vote = displayVotes[participant.id];
-                const faceValue = vote?.value ?? "";
-                const isCurrentUser = participant.id === currentUserId;
-                const hasVoted = Boolean(vote) || (!isHistoryPreview && participant.voted);
-                const isHighlighted = Boolean(vote && highlightedValues.has(vote.value));
+            {snapshot.room.status === "closed" && !isHistoryPreview ? (
+              <div className="poker-closed-notice">
+                <span>Poker closed</span>
+              </div>
+            ) : (
+              <div className="player-card-grid">
+                {displayedParticipants.map(({ participant, state }) => {
+                  const vote = displayVotes[participant.id];
+                  const faceValue = vote?.value ?? "";
+                  const isCurrentUser = participant.id === currentUserId;
+                  const hasVoted = Boolean(vote) || (!isHistoryPreview && participant.voted);
+                  const isHighlighted = Boolean(vote && highlightedValues.has(vote.value));
 
-                return (
-                  <article
-                    className={`player-seat ${isCurrentUser ? "player-seat--me" : ""} ${
-                      state === "entering" ? "player-seat--entering" : ""
-                    } ${state === "leaving" ? "player-seat--leaving" : ""} ${isHighlighted ? "player-seat--highlighted" : ""}`}
-                    key={participant.id}
-                  >
-                    <div className={`flip-card ${displayRevealed ? "is-revealed" : ""} ${isHighlighted ? "is-highlighted" : ""}`}>
-                      <div className="flip-card__inner">
-                        <div className="flip-card__front">
-                          <strong className="card-symbol">{hasVoted ? "\u2713" : "?"}</strong>
-                        </div>
-                        <div className="flip-card__back">
-                          <strong className="card-value">{faceValue || "-"}</strong>
+                  return (
+                    <article
+                      className={`player-seat ${isCurrentUser ? "player-seat--me" : ""} ${
+                        state === "entering" ? "player-seat--entering" : ""
+                      } ${state === "leaving" ? "player-seat--leaving" : ""} ${isHighlighted ? "player-seat--highlighted" : ""}`}
+                      key={participant.id}
+                    >
+                      <div className={`flip-card ${displayRevealed && (isCurrentUser || canViewVotesOfOthers) ? "is-revealed" : ""} ${isHighlighted ? "is-highlighted" : ""}`}>
+                        <div className="flip-card__inner">
+                          <div className="flip-card__front">
+                            <strong className="card-symbol">{hasVoted ? "\u2713" : "?"}</strong>
+                          </div>
+                          <div className="flip-card__back">
+                            <strong className="card-value">{faceValue || "-"}</strong>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                    <span className="seat-name">
-                      <span className="seat-name__first">{participant.firstName}</span>
-                      <span className="seat-name__last">{participant.lastName}</span>
-                    </span>
-                  </article>
-                );
-              })}
-            </div>
+                      <span className="seat-name">
+                        <span className="seat-name__first">{participant.firstName}</span>
+                        <span className="seat-name__last">{participant.lastName}</span>
+                      </span>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           {!isHistoryPreview && snapshot.room.status !== "closed" && canVote ? (
@@ -1393,8 +1462,8 @@ export function RoomView({
             </div>
           ) : null}
 
-          {(canManageRound || canDeleteRoom || canManageCardHighlight) && !isHistoryPreview ? (
-            <div className={`room-admin-layout ${canManageRound ? "" : "room-admin-layout--controls-only"}`.trim()}>
+          {(canManageRound || canDeleteRoom || canManageCardHighlight || canViewHistory) && !isHistoryPreview ? (
+            <div className={`room-admin-layout ${!canManageRound && !canViewHistory ? "room-admin-layout--controls-only" : ""}`.trim()}>
               <div className="card card--compact controls-panel">
                 <div className="controls-inline controls-inline--stacked">
                   {canManageRound ? (
@@ -1410,12 +1479,7 @@ export function RoomView({
                           {selectedHighlightLabel}
                         </button>
                       ) : null}
-                      {canViewHistory ? (
-                      <button className="ghost-button ghost-button--strong" onClick={openHistoryPanel} type="button">
-                          History
-                      </button>
-                      ) : null}
-                      {canImportJiraIssues ? (
+                      {canImportJiraIssues && snapshot.room.status !== "closed" ? (
                         <button className="ghost-button ghost-button--strong" onClick={() => void openJiraModal()} type="button">
                           Import from Jira
                         </button>
@@ -1425,10 +1489,22 @@ export function RoomView({
                           Send to Jira
                         </button>
                       ) : null}
-                      <button disabled={snapshot.room.status !== "revealed"} onClick={() => setClosePokerConfirmOpen(true)} type="button">
-                        Close poker
-                      </button>
+                      {snapshot.room.status !== "closed" ? (
+                        <button disabled={snapshot.room.status !== "revealed"} onClick={() => setClosePokerConfirmOpen(true)} type="button">
+                          Close poker
+                        </button>
+                      ) : null}
+                      {canViewHistory ? (
+                        <button className="ghost-button ghost-button--strong" onClick={openHistoryPanel} type="button">
+                          History
+                        </button>
+                      ) : null}
                     </>
+                  ) : null}
+                  {!canManageRound && canViewHistory ? (
+                    <button className="ghost-button ghost-button--strong" onClick={openHistoryPanel} type="button">
+                      History
+                    </button>
                   ) : null}
                   {canDeleteRoom ? (
                     <button className="deck-delete-btn" onClick={openDeleteRoomConfirm} type="button">
@@ -1438,10 +1514,11 @@ export function RoomView({
                 </div>
               </div>
 
-              {canManageRound ? (
+              {(canManageRound || canViewHistory) ? (
               <div className="card card--compact queue-panel">
-                {!isQueueOverlayOpen ? (
+                {!isQueueOverlayOpen && canManageRound ? (
                   <div className="queue-panel__default-content">
+                    {snapshot.room.status !== "closed" ? (
                     <form className="stack-form" onSubmit={handleQueueIssue}>
                       <div className="queue-form-fields">
                         <input
@@ -1485,6 +1562,7 @@ export function RoomView({
                         </div>
                       </div>
                     </form>
+                    ) : null}
                     <div className="queue-divider" />
                   </div>
                 ) : null}
@@ -1630,7 +1708,39 @@ export function RoomView({
                                     </span>
                                   </button>
 
-                                  {jiraActionFilteredAssigneeOptions.map((user) => (
+                                  {jiraActionGroupedAssigneeOptions.participants.length > 0 ? (
+                                    <>
+                                      <div className="jira-action-modal__assignee-group-label" aria-hidden="true">
+                                        Room participants
+                                      </div>
+                                      {jiraActionGroupedAssigneeOptions.participants.map((user) => (
+                                        <button
+                                          aria-selected={jiraActionAssigneeAccountId === user.accountId}
+                                          className={`jira-action-modal__assignee-option ${jiraActionAssigneeAccountId === user.accountId ? "is-selected" : ""}`}
+                                          key={user.accountId}
+                                          onClick={() => handleJiraAssigneeChange(user.accountId)}
+                                          role="option"
+                                          type="button"
+                                        >
+                                          <span className="avatar-circle jira-action-modal__assignee-avatar" aria-hidden="true">
+                                            {user.avatarUrl ? (
+                                              <img alt="" onError={(event) => { event.currentTarget.style.display = "none"; }} src={user.avatarUrl} />
+                                            ) : null}
+                                            {getAvatarInitials(user.displayName)}
+                                          </span>
+                                          <span className="jira-action-modal__assignee-option-copy">
+                                            <strong>{user.displayName}</strong>
+                                            <span>{user.emailAddress || user.accountId}</span>
+                                          </span>
+                                        </button>
+                                      ))}
+                                      {jiraActionGroupedAssigneeOptions.others.length > 0 ? (
+                                        <div className="jira-action-modal__assignee-group-divider" aria-hidden="true" />
+                                      ) : null}
+                                    </>
+                                  ) : null}
+
+                                  {jiraActionGroupedAssigneeOptions.others.map((user) => (
                                     <button
                                       aria-selected={jiraActionAssigneeAccountId === user.accountId}
                                       className={`jira-action-modal__assignee-option ${jiraActionAssigneeAccountId === user.accountId ? "is-selected" : ""}`}
@@ -1812,32 +1922,6 @@ export function RoomView({
                             <p className="settings-help settings-help--modal-spaced">Kanban board selected. Sprint is not used for this import.</p>
                           </label>
                         )}
-                      </div>
-
-                      <div className="jira-import-section jira-import-section--compact">
-                        <p className="jira-import-section__title">Import rules</p>
-                        <div className="jira-settings-toggle-grid">
-                          <div className="settings-toggle">
-                            <button
-                              className={`toggle-switch ${jiraFilters.storyPointsEmpty ? "is-active" : ""}`}
-                              onClick={() => setJiraFilters((current) => ({ ...current, storyPointsEmpty: !current.storyPointsEmpty }))}
-                              type="button"
-                            >
-                              <span className="toggle-switch__knob" />
-                            </button>
-                            <span>Story Points is empty</span>
-                          </div>
-                          <div className="settings-toggle">
-                            <button
-                              className={`toggle-switch ${jiraFilters.originalEstimateEmpty ? "is-active" : ""}`}
-                              onClick={() => setJiraFilters((current) => ({ ...current, originalEstimateEmpty: !current.originalEstimateEmpty }))}
-                              type="button"
-                            >
-                              <span className="toggle-switch__knob" />
-                            </button>
-                            <span>Original Estimate is empty</span>
-                          </div>
-                        </div>
                         <label className="jira-import-order-field">
                           <span>Import order</span>
                           <select
@@ -1853,6 +1937,108 @@ export function RoomView({
                             <option value="priority">Priority</option>
                           </select>
                         </label>
+                      </div>
+
+                      <div className="jira-import-section jira-import-section--compact">
+                        <p className="jira-import-section__title">Import rules</p>
+                        <div className="jira-filter-conditions">
+                          {jiraFilters.conditions.map((condition, index) => (
+                            <div key={index}>
+                              {index > 0 && (
+                                <div className="jira-filter-connector">
+                                  <select
+                                    value={jiraFilters.connectors[index - 1] ?? "AND"}
+                                    onChange={(event) =>
+                                      setJiraFilters((current) => {
+                                        const connectors = [...current.connectors] as JiraFilterConnector[];
+                                        connectors[index - 1] = event.target.value as JiraFilterConnector;
+                                        return { ...current, connectors };
+                                      })
+                                    }
+                                  >
+                                    <option value="AND">AND</option>
+                                    <option value="OR">OR</option>
+                                  </select>
+                                </div>
+                              )}
+                              <div className="jira-filter-row">
+                                <select
+                                  value={condition.field}
+                                  onChange={(event) =>
+                                    setJiraFilters((current) => {
+                                      const conditions = [...current.conditions];
+                                      conditions[index] = { ...conditions[index], field: event.target.value as "storyPoints" | "originalEstimate" };
+                                      return { ...current, conditions };
+                                    })
+                                  }
+                                >
+                                  <option value="storyPoints">Story Points</option>
+                                  <option value="originalEstimate">Original Estimate</option>
+                                </select>
+                                <select
+                                  value={condition.operator}
+                                  onChange={(event) =>
+                                    setJiraFilters((current) => {
+                                      const conditions = [...current.conditions];
+                                      conditions[index] = { ...conditions[index], operator: event.target.value as JiraFilterOperator, value: null };
+                                      return { ...current, conditions };
+                                    })
+                                  }
+                                >
+                                  <option value="IS EMPTY">IS EMPTY</option>
+                                  <option value="IS NOT EMPTY">IS NOT EMPTY</option>
+                                  <option value="=">=</option>
+                                  <option value="!=">!=</option>
+                                </select>
+                                {(condition.operator === "=" || condition.operator === "!=") && (
+                                  <input
+                                    className="jira-filter-value-input"
+                                    type="number"
+                                    min="0"
+                                    value={condition.value ?? ""}
+                                    onChange={(event) =>
+                                      setJiraFilters((current) => {
+                                        const conditions = [...current.conditions];
+                                        const val = event.target.value === "" ? null : Number(event.target.value);
+                                        conditions[index] = { ...conditions[index], value: val };
+                                        return { ...current, conditions };
+                                      })
+                                    }
+                                  />
+                                )}
+                                {jiraFilters.conditions.length > 1 && (
+                                  <button
+                                    className="jira-filter-remove"
+                                    type="button"
+                                    onClick={() =>
+                                      setJiraFilters((current) => {
+                                        const conditions = current.conditions.filter((_, i) => i !== index);
+                                        const connectorIndexToRemove = index === 0 ? 0 : index - 1;
+                                        const connectors = current.connectors.filter((_, i) => i !== connectorIndexToRemove);
+                                        return { ...current, conditions, connectors };
+                                      })
+                                    }
+                                  >
+                                    ×
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                          <button
+                            className="jira-filter-add"
+                            type="button"
+                            onClick={() =>
+                              setJiraFilters((current) => ({
+                                ...current,
+                                conditions: [...current.conditions, { field: "storyPoints", operator: "IS EMPTY", value: null }],
+                                connectors: [...current.connectors, "AND"],
+                              }))
+                            }
+                          >
+                            + Add condition
+                          </button>
+                        </div>
                       </div>
 
                       <div className="queue-jira-panel__actions">
@@ -1974,7 +2160,7 @@ export function RoomView({
                       </div>
                     </div>
                   </div>
-                ) : (
+                ) : canManageRound ? (
                   <>
                     <div className="queue-list" ref={queueListRef}>
                       {pagedQueue.length === 0 ? (
@@ -2155,7 +2341,7 @@ export function RoomView({
                       </div>
                     )}
                   </>
-                )}
+                ) : null}
               </div>
               ) : null}
             </div>
@@ -2186,6 +2372,8 @@ export function RoomView({
                   if (!timelineTrackRef.current) {
                     return;
                   }
+                  event.currentTarget.setPointerCapture(event.pointerId);
+                  event.preventDefault();
                   draggingTimelineRef.current = true;
                   setHistoryPlayback(playbackFromPointer(event.clientX, timelineTrackRef.current));
                 }}
@@ -2431,6 +2619,36 @@ export function RoomView({
         </div>
       ) : null}
 
+      {roomRenameOpen ? (
+        <div className="modal-overlay modal-overlay--confirm" onClick={closeRenameRoom} role="presentation">
+          <form
+            className="card admin-modal admin-modal--confirm admin-modal--rename"
+            onClick={(event) => event.stopPropagation()}
+            onSubmit={(event) => void confirmRenameRoom(event)}
+            role="dialog"
+            aria-modal="true"
+          >
+            <h2>Rename Room</h2>
+            <label>
+              <input
+                autoFocus
+                value={roomRenameName}
+                onChange={(e) => setRoomRenameName(e.target.value)}
+                disabled={roomRenameBusy}
+              />
+            </label>
+            <div className="admin-modal-actions">
+              <button className="button-center" disabled={roomRenameBusy} onClick={closeRenameRoom} type="button">
+                Cancel
+              </button>
+              <button className="button-center" disabled={roomRenameBusy || !roomRenameName.trim()} type="submit">
+                {roomRenameBusy ? "Saving..." : "Save"}
+              </button>
+            </div>
+          </form>
+        </div>
+      ) : null}
+
       {roomDeleteOpen ? (
         <div className="modal-overlay modal-overlay--confirm" onClick={closeDeleteRoomConfirm} role="presentation">
           <div className="card admin-modal admin-modal--confirm" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true">
@@ -2481,6 +2699,7 @@ function buildHistoryFrame(issue: Issue | null, playbackPercent: number): Histor
           id: event.participantId,
           firstName: nameParts.firstName,
           lastName: nameParts.lastName,
+          email: "",
           voted: Boolean(visibleVotes[event.participantId]),
           canVote: event.participantCanVote ?? true,
         });
@@ -3152,6 +3371,36 @@ function filterJiraAssignableUsers(users: JiraAssignableUser[], search: string) 
     ].map((value) => String(value || "").toLowerCase());
     return haystack.some((value) => value.includes(normalizedSearch));
   });
+}
+
+function groupJiraAssignableUsersByParticipants(
+  users: JiraAssignableUser[],
+  participants: Participant[]
+): { participants: JiraAssignableUser[]; others: JiraAssignableUser[] } {
+  const participantEmails = new Set(
+    participants.map((p) => p.email.toLowerCase().trim()).filter(Boolean)
+  );
+  const participantNames = new Set(
+    participants.map((p) => [p.firstName, p.lastName].filter(Boolean).join(" ").toLowerCase().trim()).filter(Boolean)
+  );
+
+  const matched: JiraAssignableUser[] = [];
+  const others: JiraAssignableUser[] = [];
+
+  for (const user of users) {
+    const jiraEmail = user.emailAddress?.toLowerCase().trim() ?? "";
+    const jiraName = user.displayName.toLowerCase().trim();
+    const isMatch =
+      (jiraEmail && participantEmails.has(jiraEmail)) ||
+      (!jiraEmail && participantNames.has(jiraName));
+    if (isMatch) {
+      matched.push(user);
+    } else {
+      others.push(user);
+    }
+  }
+
+  return { participants: matched, others };
 }
 
 function getAvatarInitials(displayName: string) {

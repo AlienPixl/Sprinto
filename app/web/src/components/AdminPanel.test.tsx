@@ -65,6 +65,9 @@ const baseSettings: SettingsOverview = {
       postPdfEnabled: true,
     },
   },
+  roomCategoriesEnabled: false,
+  roomCategoryRequired: false,
+  roomCategories: [],
   scheduledTasks: {
     autoAnonymizeDeactivatedUsers: {
       enabled: false,
@@ -237,24 +240,35 @@ const overview: AdminOverview = {
   decks: [{ id: "deck-1", name: "Fibonacci", values: ["1", "2", "3"], isDefault: true, createdAt: "2026-04-13T10:00:00.000Z" }],
   activeSessions: [],
   auditLogs: [],
+  roomCategories: [],
 };
 
 function renderAdminPanel({
   currentOverview = overview,
   onSaveSettings = vi.fn().mockResolvedValue(undefined),
+  onSaveRoomSettings = vi.fn().mockResolvedValue(undefined),
+  onCreateRoomCategory = vi.fn().mockResolvedValue(undefined),
+  onUpdateRoomCategory = vi.fn().mockResolvedValue(undefined),
+  onDeleteRoomCategory = vi.fn().mockResolvedValue(undefined),
+  user = adminUser,
 }: {
   currentOverview?: AdminOverview;
   onSaveSettings?: (settings: SettingsOverview) => Promise<void>;
+  onSaveRoomSettings?: (settings: SettingsOverview) => Promise<void>;
+  onCreateRoomCategory?: (name: string) => Promise<void>;
+  onUpdateRoomCategory?: (categoryId: string, name: string) => Promise<void>;
+  onDeleteRoomCategory?: (categoryId: string) => Promise<void>;
+  user?: User;
 } = {}) {
   return render(
     <AdminPanel
-      user={adminUser}
+      user={user}
       overview={currentOverview}
       onSaveSettings={onSaveSettings}
       onSaveUpdateSettings={vi.fn().mockResolvedValue(undefined)}
       onSaveIntegrationSettings={vi.fn().mockResolvedValue(undefined)}
       onCheckForUpdates={vi.fn().mockResolvedValue(undefined)}
-      onSaveRoomSettings={vi.fn().mockResolvedValue(undefined)}
+      onSaveRoomSettings={onSaveRoomSettings}
       onRunScheduledTask={vi.fn().mockResolvedValue("ok")}
       onTestActiveDirectory={vi.fn().mockResolvedValue({ ok: true, checks: [], user: null })}
       onTestJira={vi.fn().mockResolvedValue({ ok: true, site: "", accountId: "", displayName: "" })}
@@ -274,6 +288,9 @@ function renderAdminPanel({
       onCreateRole={vi.fn().mockResolvedValue(undefined)}
       onUpdateRole={vi.fn().mockResolvedValue(undefined)}
       onDeleteRole={vi.fn().mockResolvedValue(undefined)}
+      onCreateRoomCategory={onCreateRoomCategory}
+      onUpdateRoomCategory={onUpdateRoomCategory}
+      onDeleteRoomCategory={onDeleteRoomCategory}
     />,
   );
 }
@@ -557,5 +574,69 @@ describe("AdminPanel", () => {
     fireEvent.click(within(userRow as HTMLElement).getByTitle("Edit user"));
 
     expect(screen.getByRole("button", { name: "Anonymize user" })).toBeTruthy();
+  });
+
+  it("shows Room Categories section in Rooms tab when user has manage_room_settings permission", async () => {
+    renderAdminPanel({ user: adminUser });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Rooms" }));
+    });
+
+    expect(screen.getByRole("button", { name: /Room Categories/ })).toBeTruthy();
+  });
+
+  it("does not show Rooms tab when user lacks manage_room_settings permission", async () => {
+    const userWithoutRoomSettings: User = {
+      ...adminUser,
+      permissions: adminUser.permissions.filter((p) => p !== "manage_room_settings"),
+    };
+    renderAdminPanel({ user: userWithoutRoomSettings });
+
+    expect(screen.queryByRole("button", { name: "Rooms" })).toBeNull();
+  });
+
+  it("shows category toggles and list when Room Categories section is expanded", async () => {
+    const overviewWithCategories: AdminOverview = {
+      ...overview,
+      roomCategories: [{ id: "cat-1", name: "Sprint Planning", createdAt: "2026-05-01T00:00:00.000Z" }],
+    };
+
+    renderAdminPanel({ user: adminUser, currentOverview: overviewWithCategories });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Rooms" }));
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Room Categories/ }));
+    });
+
+    expect(screen.getByText("Enable room categories")).toBeTruthy();
+    expect(screen.getByText("Require category when creating room")).toBeTruthy();
+    expect(screen.getByText("Sprint Planning")).toBeTruthy();
+  });
+
+  it("calls onCreateRoomCategory when a new category is added", async () => {
+    const onCreateRoomCategory = vi.fn().mockResolvedValue(undefined);
+
+    renderAdminPanel({ user: adminUser, onCreateRoomCategory });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Rooms" }));
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Room Categories/ }));
+    });
+
+    const input = screen.getByPlaceholderText("New category name");
+    fireEvent.change(input, { target: { value: "Backend" } });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "+ Add" }));
+    });
+
+    expect(onCreateRoomCategory).toHaveBeenCalledWith("Backend");
   });
 });

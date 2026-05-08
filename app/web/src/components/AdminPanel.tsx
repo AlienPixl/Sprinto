@@ -1,5 +1,5 @@
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { ActiveDirectoryTestResult, AdminOverview, AuditLog, Deck, JiraIntegrationSettings, Role, ScheduledTaskSchedule, SettingsOverview, User } from "../lib/types";
+import { ActiveDirectoryTestResult, AdminOverview, AuditLog, Deck, JiraIntegrationSettings, Role, RoomCategory, ScheduledTaskSchedule, SettingsOverview, User } from "../lib/types";
 import { validatePassword, validatePasswordMatch, type PasswordValidationResult } from "../lib/passwordValidator";
 
 type DeckFormState = { name: string; values: string };
@@ -101,6 +101,9 @@ type AdminPanelProps = {
   onCreateRole: (payload: { name: string; description: string; adGroupName: string; entraAppRoleValue: string; entraGroupId: string; permissions: string[] }) => Promise<void>;
   onUpdateRole: (roleId: string, payload: { name: string; description: string; adGroupName: string; entraAppRoleValue: string; entraGroupId: string; permissions: string[] }) => Promise<void>;
   onDeleteRole: (roleId: string) => Promise<void>;
+  onCreateRoomCategory: (name: string) => Promise<void>;
+  onUpdateRoomCategory: (categoryId: string, name: string) => Promise<void>;
+  onDeleteRoomCategory: (categoryId: string) => Promise<void>;
 };
 
 function parseDeckValues(raw: string): string[] {
@@ -133,10 +136,12 @@ function translatePermission(permissionName: string) {
     manage_updates: "Manage Updates",
     create_room: "Create Room",
     delete_room: "Delete Room",
+    rename_room: "Rename Room",
     highlight_cards: "Highlight Cards",
     vote: "Vote",
     reveal_votes: "Reveal Votes",
     view_votes_of_others: "View Votes of Others",
+    view_history: "View History",
     close_poker: "End Round",
     queue_issues: "Manage Issue Queue",
     jira_import_issues: "Import Jira Issues",
@@ -151,11 +156,13 @@ function getPermissionCategory(permissionName: string): string {
   const categories: Record<string, string> = {
     vote: "Poker Voting",
     view_votes_of_others: "Poker Voting",
+    view_history: "Poker Voting",
     queue_issues: "Poker Voting",
     reveal_votes: "Poker Voting",
     close_poker: "Poker Voting",
     create_room: "Room Management",
     delete_room: "Room Management",
+    rename_room: "Room Management",
     highlight_cards: "Room Management",
     manage_users: "System Administration",
     manage_roles: "System Administration",
@@ -227,9 +234,10 @@ function getPermissionOrder(permissionName: string): number {
   const orderMap: Record<string, number> = {
     vote: 0,
     view_votes_of_others: 1,
-    queue_issues: 2,
-    reveal_votes: 3,
-    close_poker: 4,
+    view_history: 2,
+    queue_issues: 3,
+    reveal_votes: 4,
+    close_poker: 5,
     create_room: 10,
     delete_room: 11,
     highlight_cards: 12,
@@ -548,7 +556,10 @@ export function AdminPanel({
   onReactivateUser,
   onCreateRole,
   onUpdateRole,
-  onDeleteRole
+  onDeleteRole,
+  onCreateRoomCategory,
+  onUpdateRoomCategory,
+  onDeleteRoomCategory,
 }: AdminPanelProps) {
   const [settings, setSettings] = useState<SettingsOverview | null>(null);
   const [roleDrafts, setRoleDrafts] = useState<Record<string, string[]>>({});
@@ -631,6 +642,11 @@ export function AdminPanel({
   const [entraSettingsOpen, setEntraSettingsOpen] = useState(false);
   const [entraMigrationSettingsOpen, setEntraMigrationSettingsOpen] = useState(false);
   const [jiraSettingsOpen, setJiraSettingsOpen] = useState(false);
+  const [roomCategoriesOpen, setRoomCategoriesOpen] = useState(false);
+  const [roomCategoryEditing, setRoomCategoryEditing] = useState<{ id: string; name: string } | null>(null);
+  const [roomCategoryDraft, setRoomCategoryDraft] = useState("");
+  const [roomCategoryBusy, setRoomCategoryBusy] = useState(false);
+  const [roomCategoryMessage, setRoomCategoryMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [scheduledTasksOpen, setScheduledTasksOpen] = useState<Record<string, boolean>>({
     autoAnonymizeDeactivatedUsers: false,
     autoCloseRooms: false,
@@ -658,10 +674,11 @@ export function AdminPanel({
   const [sessionPage, setSessionPage] = useState(0);
 
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
-  const [deleteConfirmType, setDeleteConfirmType] = useState<"user-deactivate" | "user-anonymize" | "role" | "deck" | "scheduled-task-run" | null>(null);
+  const [deleteConfirmType, setDeleteConfirmType] = useState<"user-deactivate" | "user-anonymize" | "role" | "deck" | "scheduled-task-run" | "room-category" | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [deleteConfirmDeleting, setDeleteConfirmDeleting] = useState(false);
   const [deckDeleteName, setDeckDeleteName] = useState<string>("");
+  const [roomCategoryDeleteName, setRoomCategoryDeleteName] = useState<string>("");
   const [scheduledTaskRunLabel, setScheduledTaskRunLabel] = useState("");
   const [inactiveUsersOpen, setInactiveUsersOpen] = useState(false);
   const [anonymizedUsersOpen, setAnonymizedUsersOpen] = useState(false);
@@ -2690,6 +2707,168 @@ export function AdminPanel({
                     </div>
                   </div>
                 </div>
+
+                {canManageRoomSettings ? (
+                  <div className="settings-category">
+                    <button
+                      className={`settings-category__toggle ${roomCategoriesOpen ? "is-open" : ""}`}
+                      onClick={() => setRoomCategoriesOpen((c) => !c)}
+                      type="button"
+                    >
+                      <span>Room Categories</span>
+                      <span className="settings-category__chevron">{roomCategoriesOpen ? "▾" : "▸"}</span>
+                    </button>
+                    {roomCategoriesOpen ? (
+                      <div className="settings-category__content">
+                        <div className="settings-toggle">
+                          <button
+                            className={`toggle-switch ${settings.roomCategoriesEnabled ? "is-active" : ""}`}
+                            onClick={() => setSettings({ ...settings, roomCategoriesEnabled: !settings.roomCategoriesEnabled })}
+                            type="button"
+                            title="Enable room categories"
+                          >
+                            <span className="toggle-switch__knob" />
+                          </button>
+                          <span>Enable room categories</span>
+                        </div>
+                        <div className="settings-toggle">
+                          <button
+                            className={`toggle-switch ${settings.roomCategoryRequired ? "is-active" : ""}`}
+                            disabled={!settings.roomCategoriesEnabled}
+                            onClick={() => setSettings({ ...settings, roomCategoryRequired: !settings.roomCategoryRequired })}
+                            type="button"
+                            title="Require category when creating room"
+                          >
+                            <span className="toggle-switch__knob" />
+                          </button>
+                          <span>Require category when creating room</span>
+                        </div>
+
+                        {roomCategoryMessage ? (
+                          <p className={`settings-help ${roomCategoryMessage.type === "error" ? "settings-help--error" : ""}`}>
+                            {roomCategoryMessage.text}
+                          </p>
+                        ) : null}
+
+                        <div style={{ marginTop: "1rem" }}>
+                          <p className="eyebrow">Categories</p>
+                          <div className="admin-table">
+                            {(adminOverview.roomCategories || []).map((cat: RoomCategory) => (
+                              <div key={cat.id} className="admin-row admin-row--compact">
+                                {roomCategoryEditing?.id === cat.id ? (
+                                  <>
+                                    <input
+                                      autoFocus
+                                      value={roomCategoryDraft}
+                                      onChange={(e) => setRoomCategoryDraft(e.target.value)}
+                                      placeholder="Category name"
+                                      style={{ flex: 1 }}
+                                    />
+                                    <button
+                                      className="button-center button-center--small"
+                                      disabled={roomCategoryBusy}
+                                      type="button"
+                                      onClick={async () => {
+                                        setRoomCategoryBusy(true);
+                                        try {
+                                          await onUpdateRoomCategory(cat.id, roomCategoryDraft);
+                                          setRoomCategoryEditing(null);
+                                          setRoomCategoryDraft("");
+                                        } catch {
+                                          setRoomCategoryMessage({ type: "error", text: "Failed to update category." });
+                                        } finally {
+                                          setRoomCategoryBusy(false);
+                                        }
+                                      }}
+                                    >
+                                      Save
+                                    </button>
+                                    <button
+                                      className="ghost-button"
+                                      type="button"
+                                      onClick={() => { setRoomCategoryEditing(null); setRoomCategoryDraft(""); }}
+                                    >
+                                      Cancel
+                                    </button>
+                                  </>
+                                ) : (
+                                  <>
+                                    <span style={{ flex: 1 }}>{cat.name}</span>
+                                    <button
+                                      className="icon-button"
+                                      type="button"
+                                      title="Edit category"
+                                      onClick={() => { setRoomCategoryEditing(cat); setRoomCategoryDraft(cat.name); }}
+                                    >
+                                      &#9998;
+                                    </button>
+                                    <button
+                                      className="icon-button icon-button--danger"
+                                      type="button"
+                                      title="Delete category"
+                                      onClick={() => {
+                                        setDeleteConfirmType("room-category");
+                                        setDeleteConfirmId(cat.id);
+                                        setRoomCategoryDeleteName(cat.name);
+                                        setDeleteConfirmOpen(true);
+                                      }}
+                                    >
+                                      &#10005;
+                                    </button>
+                                  </>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                          <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.75rem" }}>
+                            <input
+                              value={roomCategoryEditing ? "" : roomCategoryDraft}
+                              onChange={(e) => !roomCategoryEditing && setRoomCategoryDraft(e.target.value)}
+                              onKeyDown={async (e) => {
+                                if (e.key !== "Enter") return;
+                                e.preventDefault();
+                                if (!roomCategoryDraft.trim() || roomCategoryEditing || roomCategoryBusy) return;
+                                setRoomCategoryBusy(true);
+                                setRoomCategoryMessage(null);
+                                try {
+                                  await onCreateRoomCategory(roomCategoryDraft.trim());
+                                  setRoomCategoryDraft("");
+                                } catch {
+                                  setRoomCategoryMessage({ type: "error", text: "Failed to create category." });
+                                } finally {
+                                  setRoomCategoryBusy(false);
+                                }
+                              }}
+                              placeholder="New category name"
+                              disabled={!!roomCategoryEditing}
+                            />
+                            <button
+                              className="button-center button-center--small"
+                              disabled={roomCategoryBusy || !!roomCategoryEditing || !roomCategoryDraft.trim()}
+                              type="button"
+                              onClick={async () => {
+                                if (!roomCategoryDraft.trim() || roomCategoryEditing) return;
+                                setRoomCategoryBusy(true);
+                                setRoomCategoryMessage(null);
+                                try {
+                                  await onCreateRoomCategory(roomCategoryDraft.trim());
+                                  setRoomCategoryDraft("");
+                                } catch {
+                                  setRoomCategoryMessage({ type: "error", text: "Failed to create category." });
+                                } finally {
+                                  setRoomCategoryBusy(false);
+                                }
+                              }}
+                            >
+                              + Add
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+
                 <button className={`button-center ${settingsSaved ? "saved" : ""}`} type="submit">
                   {settingsSaved ? "✓ Saved" : "Save room settings"}
                 </button>
@@ -4884,6 +5063,8 @@ export function AdminPanel({
                 ? `Do you really want to run "${scheduledTaskRunLabel}" manually now? This will not affect its configured schedule.`
                 : deleteConfirmType === "role"
                 ? "Are you sure you want to delete this role? This action cannot be undone."
+                : deleteConfirmType === "room-category"
+                ? `Are you sure you want to delete the category "${roomCategoryDeleteName}"? This action cannot be undone.`
                 : `Are you sure you want to delete the deck "${deckDeleteName}"? This action cannot be undone.`}
             </p>
 
@@ -4915,6 +5096,13 @@ export function AdminPanel({
                         await onDeleteDeck(deleteConfirmId);
                       } finally {
                         setDeckBusy(false);
+                      }
+                    } else if (deleteConfirmType === "room-category") {
+                      setRoomCategoryBusy(true);
+                      try {
+                        await onDeleteRoomCategory(deleteConfirmId);
+                      } finally {
+                        setRoomCategoryBusy(false);
                       }
                     }
                     setDeleteConfirmOpen(false);

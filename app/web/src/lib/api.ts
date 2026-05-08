@@ -16,6 +16,7 @@ import {
   JiraWorklogReport,
   JiraWorklogRequest,
   Room,
+  RoomCategory,
   RoomEvent,
   RoomSnapshot,
   RoomSummary,
@@ -250,6 +251,31 @@ export async function deleteDeck(deckId: string): Promise<AdminOverview> {
   });
 }
 
+export async function listRoomCategories(): Promise<RoomCategory[]> {
+  const payload = await request<{ roomCategories: RoomCategory[] }>("/api/admin/room-categories");
+  return payload.roomCategories;
+}
+
+export async function createRoomCategory(name: string): Promise<AdminOverview> {
+  return request<AdminOverview>("/api/admin/room-categories", {
+    method: "POST",
+    body: JSON.stringify({ name })
+  });
+}
+
+export async function updateRoomCategory(categoryId: string, name: string): Promise<AdminOverview> {
+  return request<AdminOverview>(`/api/admin/room-categories/${encodeURIComponent(categoryId)}`, {
+    method: "PUT",
+    body: JSON.stringify({ name })
+  });
+}
+
+export async function deleteRoomCategory(categoryId: string): Promise<AdminOverview> {
+  return request<AdminOverview>(`/api/admin/room-categories/${encodeURIComponent(categoryId)}`, {
+    method: "DELETE"
+  });
+}
+
 export async function listRooms(): Promise<RoomSummary[]> {
   const payload = await request<{ rooms: RoomSummary[] }>("/api/rooms");
   return payload.rooms;
@@ -262,10 +288,10 @@ export async function createRoom(name: string, storyTitle: string): Promise<Room
   });
 }
 
-export async function createRoomWithDeck(name: string, storyTitle: string, deckName: string): Promise<Room> {
+export async function createRoomWithDeck(name: string, storyTitle: string, deckName: string, categoryId?: string): Promise<Room> {
   return request<Room>("/api/rooms", {
     method: "POST",
-    body: JSON.stringify({ name, storyTitle, deckName })
+    body: JSON.stringify({ name, storyTitle, deckName, categoryId: categoryId || null })
   });
 }
 
@@ -667,6 +693,13 @@ export async function updateRoomHighlightMode(roomId: string, highlightMode: "no
   return request<RoomSnapshot>(`/api/rooms/${roomId}/highlight`, {
     method: "POST",
     body: JSON.stringify({ highlightMode })
+  });
+}
+
+export async function renameRoom(roomId: string, name: string): Promise<RoomSnapshot> {
+  return request<RoomSnapshot>(`/api/rooms/${roomId}/rename`, {
+    method: "POST",
+    body: JSON.stringify({ name })
   });
 }
 

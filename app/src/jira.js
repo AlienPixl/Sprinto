@@ -480,17 +480,44 @@ function buildJiraIssuePath({ boardId, sprintId, storyPointsFieldId, startAt }) 
   return `/rest/agile/1.0/board/${encodeURIComponent(boardId)}/issue?startAt=${startAt}&maxResults=50&fields=${fields}`;
 }
 
+function evaluateFilterCondition(condition, storyPointsValue, originalEstimateSeconds) {
+  const rawValue = condition.field === "storyPoints" ? storyPointsValue : originalEstimateSeconds;
+  const isEmpty = rawValue === null || rawValue === undefined || rawValue === "";
+  if (condition.operator === "IS EMPTY") return isEmpty;
+  if (condition.operator === "IS NOT EMPTY") return !isEmpty;
+  if (condition.operator === "=") return !isEmpty && Number(rawValue) === Number(condition.value);
+  if (condition.operator === "!=") return isEmpty || Number(rawValue) !== Number(condition.value);
+  return true;
+}
+
+function parseOriginalEstimateSeconds(timetracking) {
+  if (timetracking?.originalEstimateSeconds != null) return timetracking.originalEstimateSeconds;
+  const str = timetracking?.originalEstimate;
+  if (str == null) return null;
+  // Parse Jira time strings like "0m", "30m", "1h", "2h 30m", "1d"
+  let seconds = 0;
+  const days = str.match(/(\d+)d/);
+  const hours = str.match(/(\d+)h/);
+  const minutes = str.match(/(\d+)m/);
+  if (days) seconds += parseInt(days[1]) * 28800; // Jira uses 8h workday
+  if (hours) seconds += parseInt(hours[1]) * 3600;
+  if (minutes) seconds += parseInt(minutes[1]) * 60;
+  return seconds;
+}
+
 function matchesIssueImportFilters(issue, storyPointsFieldId, filters) {
   const storyPointsValue = issue?.fields?.[storyPointsFieldId];
-  const originalEstimateSeconds = issue?.fields?.timetracking?.originalEstimateSeconds ?? null;
+  const originalEstimateSeconds = parseOriginalEstimateSeconds(issue?.fields?.timetracking);
 
-  if (filters.storyPointsEmpty && storyPointsValue !== null && storyPointsValue !== undefined && storyPointsValue !== "") {
-    return false;
+  if (!filters.conditions || filters.conditions.length === 0) return true;
+
+  let result = evaluateFilterCondition(filters.conditions[0], storyPointsValue, originalEstimateSeconds);
+  for (let i = 1; i < filters.conditions.length; i++) {
+    const condResult = evaluateFilterCondition(filters.conditions[i], storyPointsValue, originalEstimateSeconds);
+    const connector = filters.connectors?.[i - 1] ?? "AND";
+    result = connector === "OR" ? result || condResult : result && condResult;
   }
-  if (filters.originalEstimateEmpty && originalEstimateSeconds !== null && originalEstimateSeconds !== undefined) {
-    return false;
-  }
-  return true;
+  return result;
 }
 
 function mapImportedJiraIssue(issue, jira, storyPointsFieldId) {

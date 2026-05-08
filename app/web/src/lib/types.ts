@@ -1,8 +1,15 @@
+export type RoomCategory = {
+  id: string;
+  name: string;
+  createdAt: string;
+};
+
 export type RoomSummary = {
   id: string;
   name: string;
   activeIssueTitle: string;
   status: string;
+  categoryId: string | null;
   participantCount: number;
   revealed: boolean;
   completedCount: number;
@@ -13,6 +20,7 @@ export type Participant = {
   id: string;
   firstName: string;
   lastName: string;
+  email: string;
   voted: boolean;
   canVote: boolean;
 };
@@ -175,9 +183,19 @@ export type JiraSprint = {
   endDate: string | null;
 };
 
+export type JiraFilterField = "storyPoints" | "originalEstimate";
+export type JiraFilterOperator = "IS EMPTY" | "IS NOT EMPTY" | "=" | "!=";
+export type JiraFilterConnector = "AND" | "OR";
+
+export type JiraFilterCondition = {
+  field: JiraFilterField;
+  operator: JiraFilterOperator;
+  value: number | null;
+};
+
 export type JiraImportFilters = {
-  storyPointsEmpty: boolean;
-  originalEstimateEmpty: boolean;
+  conditions: JiraFilterCondition[];
+  connectors: JiraFilterConnector[];
   importOrder: "issue-key" | "priority";
 };
 
@@ -350,6 +368,9 @@ export type SettingsOverview = {
   faviconDataUrl: string;
   integrations: IntegrationsOverview;
   scheduledTasks: ScheduledTasksOverview;
+  roomCategoriesEnabled: boolean;
+  roomCategoryRequired: boolean;
+  roomCategories: RoomCategory[];
 };
 
 export type ScheduledTaskFrequency = "minutes" | "hourly" | "daily" | "selected_weekdays" | "weekly" | "monthly" | "yearly";
@@ -438,6 +459,7 @@ export type AdminOverview = {
   decks: Deck[];
   activeSessions: ActiveSession[];
   auditLogs: AuditLog[];
+  roomCategories: RoomCategory[];
 };
 
 export type ActiveSession = {

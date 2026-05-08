@@ -333,8 +333,8 @@ describe("jira helpers", () => {
       boardId: "10",
       sprintId: "20",
       filters: {
-        storyPointsEmpty: true,
-        originalEstimateEmpty: false,
+        conditions: [{ field: "storyPoints", operator: "IS EMPTY", value: null }],
+        connectors: [],
         importOrder: "priority",
       },
     });
@@ -406,8 +406,8 @@ describe("jira helpers", () => {
     const issues = await listJiraIssues(settings, {
       boardId: "10",
       filters: {
-        storyPointsEmpty: false,
-        originalEstimateEmpty: false,
+        conditions: [],
+        connectors: [],
         importOrder: "issue-key",
       },
     });
