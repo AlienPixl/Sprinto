@@ -1,96 +1,148 @@
+<img src="assets/docs/hero.svg" alt="Sprinto — Self-hosted planning poker" width="100%" />
 <p align="center">
-  <img src="assets/Logo_bitmap_noBG.png" alt="Sprinto logo" width="320" />
+  <img src="assets/docs/divider.svg" width="100%" /><br/>
+  <a href="https://github.com/AlienPixl/Sprinto/releases/latest">
+    <img src="https://img.shields.io/github/v/release/AlienPixl/Sprinto?label=release&color=5EA8A0" alt="Latest release" />
+  </a>
+  &nbsp;
+  <a href="https://github.com/AlienPixl/Sprinto/actions/workflows/release-tests.yml">
+    <img src="https://img.shields.io/github/actions/workflow/status/AlienPixl/Sprinto/release-tests.yml?label=tests&color=5EA8A0" alt="Tests" />
+  </a>
+  &nbsp;
+  <a href="LICENSE">
+    <img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2FAlienPixl%2FSprinto%2Fmain%2F.github%2Flicense-version.json&query=%24.version&label=license&prefix=Sprinto%20Custom%20&color=5EA8A0" alt="License" />
+  </a>
+  &nbsp;
+  <a href="TRADEMARKS.md">
+    <img src="https://img.shields.io/badge/trademarks-reserved-5EA8A0" alt="Trademarks" />
+  </a>
+  <img src="assets/docs/divider.svg" width="100%" />
 </p>
 
-# Sprinto
+Real-time planning poker that lives on your own server. Teams vote simultaneously — no anchoring, no waiting. Estimates go straight back to Jira with one click. Works with local accounts, Active Directory, and Microsoft Entra SSO out of the box.
 
-Sprinto is a locally hosted planning poker application for team estimation.
+- **Real-time voting** — simultaneous reveal, no anchoring bias
+- **Jira Cloud** — import sprint backlog, push story points, post comments and PDF reports
+- **Enterprise auth** — Active Directory LDAP and Microsoft Entra ID (OIDC) alongside local accounts
+- **Vote history** — full timeline replay, scrub through who voted when
+- **Role-based access** — built-in admin / master / user roles, fully customisable
+- **Worklog reports** — Jira time-tracking aggregated by issue, user, or epic
 
-## What Sprinto Does
+<br>
+<img src="assets/docs/integrations-banner.svg" alt="Jira Cloud and Microsoft Entra integration features" width="100%" />
+<br>
+<img src="assets/docs/divider.svg" width="100%" />
 
-- creates planning poker rooms
-- supports voting and result reveal in real time
-- manages issue queues and voting history
-- includes administration for users, roles, card decks, and settings
-- supports local sign-in, a deployment-managed recovery admin, `Microsoft Active Directory`, and `Microsoft Entra`
+## What it looks like
 
-## Quick Start
+<img src="assets/docs/screenshots/voting-admin.png" alt="Voting room — admin view" width="100%" />
+<p align="center"><em>Voting room — admin view with live results and controls</em></p>
 
-Review `docker-compose.example.yml`, then rename it to `docker-compose.yml` before the first startup.
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <img src="assets/docs/screenshots/voting-deck.png" alt="Participant view — card deck" width="100%" />
+      <p><em>Participant view — card selection deck</em></p>
+    </td>
+    <td width="50%" align="center">
+      <img src="assets/docs/screenshots/dashboard.png" alt="Dashboard — room list" width="100%" />
+      <p><em>Dashboard — room list with status filters</em></p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <img src="assets/docs/screenshots/auth-settings.png" alt="Authentication settings — local, Active Directory, Entra" width="100%" />
+      <p><em>Authentication — local, Active Directory, and Entra ID side by side</em></p>
+    </td>
+    <td width="50%" align="center">
+      <img src="assets/docs/screenshots/jira-settings.png" alt="Jira Cloud integration settings" width="100%" />
+      <p><em>Jira Cloud — connect with a service account and API token</em></p>
+    </td>
+  </tr>
+</table>
+
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <video src="assets/docs/screenshots/jira-import.mp4" controls poster="assets/docs/screenshots/jira-import-poster.jpg" width="100%"></video>
+      <p><em>Jira import — select board, sprint, apply JQL-like filters</em></p>
+    </td>
+    <td width="50%" align="center">
+      <video src="assets/docs/screenshots/voting-history.mp4" controls poster="assets/docs/screenshots/voting-history-poster.jpg" width="100%"></video>
+      <p><em>Vote history — scrub through the full timeline of who voted when</em></p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <video src="assets/docs/screenshots/voting-flow.mp4" controls poster="assets/docs/screenshots/voting-flow-poster.jpg" width="100%"></video>
+      <p><em>Voting flow — cast votes, reveal simultaneously, push estimate to Jira</em></p>
+    </td>
+    <td width="50%" align="center">
+      <video src="assets/docs/screenshots/worklog-report.mp4" controls poster="assets/docs/screenshots/worklog-report-poster.jpg" width="100%"></video>
+      <p><em>Jira Worklog — time-tracking report grouped by issue, user, or epic</em></p>
+    </td>
+  </tr>
+</table>
+
+<img src="assets/docs/divider.svg" width="100%" />
+
+## Quick start
+
+**Requirements:** Docker Engine 24+ and Docker Compose v2.
 
 ```bash
-cp docker-compose.example.yml docker-compose.yml
 cp default.env.example .env
-docker compose up --build
+# open .env and set SPRINTO_RECOVERY_ADMIN_PASSWORD
+docker compose up -d
+# → http://localhost:3000
 ```
 
-Sprinto starts at:
+<img src="assets/docs/divider.svg" width="100%" />
 
-- `http://localhost:3000`
+## Environment variables
 
-The default local setup uses:
+### Core
 
-- bundled PostgreSQL and Sprinto run together in one Docker deployment
-- demo data and demo users are enabled
-- recovery admin can be enabled after you fill its password
-- `DATABASE_URL` points to the bundled PostgreSQL service from `docker-compose.yml`
+| Variable | Default | Notes |
+|---|---|---|
+| `DATABASE_URL` | — | PostgreSQL connection string. The default `.env` points to the bundled service. |
+| `PORT` | `3000` | Port the app listens on inside the container. |
+| `SESSION_COOKIE_NAME` | `sprinto_session` | Cookie name. Change when running multiple instances on the same domain. |
 
-## Demo Accounts
+### Bootstrap
 
-When `SPRINTO_SEED_DEMO_DATA=true`, Sprinto creates:
+| Variable | Default | Notes |
+|---|---|---|
+| `SPRINTO_SEED_DEMO_DATA` | `true` | Seed demo rooms and accounts (`admin/admin`, `master/master`, `user/user`) on first start. Set `false` for production. |
+| `SPRINTO_RECOVERY_ADMIN_ENABLED` | `true` | Enable the break-glass admin account. |
+| `SPRINTO_RECOVERY_ADMIN_USERNAME` | `sprinto-recovery` | Username for the break-glass account. |
+| `SPRINTO_RECOVERY_ADMIN_PASSWORD` | — | **Set before first startup.** Store in a password manager. |
+| `SPRINTO_RECOVERY_ADMIN_DISPLAY_NAME` | `System Recovery Admin` | Display name in UI and audit log. |
 
-- `admin / admin`
-- `master / master`
-- `user / user`
+The recovery admin is recreated on every startup from these variables. To rotate the password — update `.env`, restart.
 
-## Authentication
+### Updates
 
-Sprinto supports:
+| Variable | Default | Notes |
+|---|---|---|
+| `UPDATE_REPOSITORY` | `AlienPixl/Sprinto` | GitHub repo polled for new releases. Set to empty to disable (air-gapped environments). |
 
-- local sign-in
-- Microsoft Active Directory sign-in
-- Microsoft Entra sign-in
-- a deployment-managed recovery admin
+### Database TLS *(external PostgreSQL only)*
 
-Recovery admin credentials are configured through `.env`:
+| Variable | Default | Notes |
+|---|---|---|
+| `SPRINTO_DB_SSL_ENABLED` | `false` | Enable TLS for the database connection. |
+| `SPRINTO_DB_SSL_REJECT_UNAUTHORIZED` | `true` | Reject untrusted certificates. |
+| `SPRINTO_DB_SSL_CA_FILE` | — | Path inside the container to a PEM CA certificate. |
+| `SPRINTO_DB_SSL_CERT_FILE` | — | Client certificate for mutual TLS. |
+| `SPRINTO_DB_SSL_KEY_FILE` | — | Client private key for mutual TLS. |
 
-- `SPRINTO_RECOVERY_ADMIN_USERNAME`
-- `SPRINTO_RECOVERY_ADMIN_PASSWORD`
-- `SPRINTO_RECOVERY_ADMIN_DISPLAY_NAME`
+Mount certificates into the container and point the `*_FILE` variables to the mounted paths.
 
-## Release Artifacts
-
-Sprinto publishes versioned GitHub releases as `Sprinto vX.Y.Z`.
-
-Each release ships:
-
-- a Linux `amd64` Docker image tarball
-- a `docker-compose.example.yml` deployment template
-- a release `default.env.example` template
-- release notes from `changelog/vX.Y.Z.md`
-
-## Documentation
-
-Public-facing documentation lives under `docs/`:
-
-- [Docs Home](docs/README.md)
-- [Quick Start](docs/quick-start.md)
-- [Authentication And Recovery](docs/authentication-and-recovery.md)
-- [Jira Integrations](docs/jira-integrations.md)
-- [Releases](docs/releases.md)
+<img src="assets/docs/divider.svg" width="100%" />
 
 ## License & Branding
 
-Sprinto is source-available under a custom license. You can use it internally, inspect
-the source, make private changes, and share it on a non-commercial basis.
+Source-available under a custom license. Internal use, inspection, and non-commercial sharing are permitted. Selling, monetising, or hosting as a paid service is not. Public forks must preserve attribution and use different branding.
 
-You may not sell Sprinto, monetize access to Sprinto, offer it as a paid hosted service,
-or present Sprinto as your own original product.
-
-If you share Sprinto or a public fork, you must preserve attribution to Martin Janecek.
-Modified public forks must also use different branding unless you have prior written
-permission.
-
-- [LICENSE](LICENSE)
-- [NOTICE](NOTICE)
-- [TRADEMARKS.md](TRADEMARKS.md)
+[LICENSE](LICENSE) · [NOTICE](NOTICE) · [TRADEMARKS.md](TRADEMARKS.md)

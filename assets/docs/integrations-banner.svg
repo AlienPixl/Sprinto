@@ -1,0 +1,75 @@
+<svg width="960" height="272" viewBox="0 0 960 272" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1" gradientUnits="objectBoundingBox">
+      <stop offset="0%" stop-color="#0b1e17"/>
+      <stop offset="100%" stop-color="#162b20"/>
+    </linearGradient>
+    <linearGradient id="jiraGrad" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox">
+      <stop offset="0%" stop-color="#0052CC"/>
+      <stop offset="100%" stop-color="#2684FF"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="960" height="272" rx="14" fill="url(#bg)"/>
+
+  <!-- Divider -->
+  <line x1="480" y1="24" x2="480" y2="248" stroke="#2a4a38" stroke-width="1"/>
+
+  <!-- ── JIRA PANEL ─────────────────────────────────────────────────── -->
+
+  <rect x="48" y="36" width="36" height="36" rx="7" fill="url(#jiraGrad)"/>
+  <text x="66" y="61" font-family="'Segoe UI', Arial, sans-serif" font-size="22" font-weight="bold"
+        fill="white" text-anchor="middle">J</text>
+
+  <text x="94" y="59" font-family="'Segoe UI', Arial, sans-serif" font-size="20" font-weight="600"
+        fill="#2684FF">Jira Cloud</text>
+
+  <line x1="48" y1="86" x2="432" y2="86" stroke="#1e3d2c" stroke-width="1"/>
+
+  <text x="48" y="114" font-family="'Segoe UI', Arial, sans-serif" font-size="14" fill="#5EA8A0">✓</text>
+  <text x="68" y="114" font-family="'Segoe UI', Arial, sans-serif" font-size="14" fill="#d4e8d8">Story point &amp; original estimate writeback</text>
+
+  <text x="48" y="142" font-family="'Segoe UI', Arial, sans-serif" font-size="14" fill="#5EA8A0">✓</text>
+  <text x="68" y="142" font-family="'Segoe UI', Arial, sans-serif" font-size="14" fill="#d4e8d8">Assignee sync with room participant priority</text>
+
+  <text x="48" y="170" font-family="'Segoe UI', Arial, sans-serif" font-size="14" fill="#5EA8A0">✓</text>
+  <text x="68" y="170" font-family="'Segoe UI', Arial, sans-serif" font-size="14" fill="#d4e8d8">Post estimate comments to issues</text>
+
+  <text x="48" y="198" font-family="'Segoe UI', Arial, sans-serif" font-size="14" fill="#5EA8A0">✓</text>
+  <text x="68" y="198" font-family="'Segoe UI', Arial, sans-serif" font-size="14" fill="#d4e8d8">JQL-like import filter builder</text>
+
+  <text x="48" y="226" font-family="'Segoe UI', Arial, sans-serif" font-size="14" fill="#5EA8A0">✓</text>
+  <text x="68" y="226" font-family="'Segoe UI', Arial, sans-serif" font-size="14" fill="#d4e8d8">Worklog reports with charts &amp; PDF export</text>
+
+  <!-- ── MICROSOFT ENTRA PANEL ──────────────────────────────────────── -->
+
+  <rect x="528" y="36" width="16" height="16" rx="2" fill="#F25022"/>
+  <rect x="547" y="36" width="16" height="16" rx="2" fill="#7FBA00"/>
+  <rect x="528" y="55" width="16" height="16" rx="2" fill="#00A4EF"/>
+  <rect x="547" y="55" width="16" height="16" rx="2" fill="#FFB900"/>
+
+  <text x="577" y="51" font-family="'Segoe UI', Arial, sans-serif" font-size="20" font-weight="600"
+        fill="#50E6FF">Microsoft Entra</text>
+  <text x="577" y="70" font-family="'Segoe UI', Arial, sans-serif" font-size="13" fill="#6a9a8a">&amp; Active Directory</text>
+
+  <line x1="528" y1="86" x2="912" y2="86" stroke="#1e3d2c" stroke-width="1"/>
+
+  <text x="528" y="114" font-family="'Segoe UI', Arial, sans-serif" font-size="14" fill="#5EA8A0">✓</text>
+  <text x="548" y="114" font-family="'Segoe UI', Arial, sans-serif" font-size="14" fill="#d4e8d8">Microsoft Entra SSO (OAuth2 redirect)</text>
+
+  <text x="528" y="142" font-family="'Segoe UI', Arial, sans-serif" font-size="14" fill="#5EA8A0">✓</text>
+  <text x="548" y="142" font-family="'Segoe UI', Arial, sans-serif" font-size="14" fill="#d4e8d8">Microsoft Active Directory (LDAP)</text>
+
+  <text x="528" y="170" font-family="'Segoe UI', Arial, sans-serif" font-size="14" fill="#5EA8A0">✓</text>
+  <text x="548" y="170" font-family="'Segoe UI', Arial, sans-serif" font-size="14" fill="#d4e8d8">Local sign-in accounts</text>
+
+  <text x="528" y="198" font-family="'Segoe UI', Arial, sans-serif" font-size="14" fill="#5EA8A0">✓</text>
+  <text x="548" y="198" font-family="'Segoe UI', Arial, sans-serif" font-size="14" fill="#d4e8d8">Multiple providers active simultaneously</text>
+
+  <text x="528" y="226" font-family="'Segoe UI', Arial, sans-serif" font-size="14" fill="#5EA8A0">✓</text>
+  <text x="548" y="226" font-family="'Segoe UI', Arial, sans-serif" font-size="14" fill="#d4e8d8">Recovery admin for break-glass access</text>
+
+  <text x="528" y="254" font-family="'Segoe UI', Arial, sans-serif" font-size="14" fill="#5EA8A0">✓</text>
+  <text x="548" y="254" font-family="'Segoe UI', Arial, sans-serif" font-size="14" fill="#d4e8d8">Role-based access control (RBAC)</text>
+</svg>
