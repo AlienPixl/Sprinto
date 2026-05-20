@@ -64,21 +64,21 @@ Real-time planning poker that lives on your own server. Teams vote simultaneousl
 <table>
   <tr>
     <td width="50%" align="center">
-      <video src="assets/docs/screenshots/jira-import.mp4" controls poster="assets/docs/screenshots/jira-import-poster.jpg" width="100%"></video>
+      <img src="assets/docs/screenshots/jira-import.gif" alt="Jira import — select board, sprint, apply JQL-like filters" width="100%" />
       <p><em>Jira import — select board, sprint, apply JQL-like filters</em></p>
     </td>
     <td width="50%" align="center">
-      <video src="assets/docs/screenshots/voting-history.mp4" controls poster="assets/docs/screenshots/voting-history-poster.jpg" width="100%"></video>
+      <img src="assets/docs/screenshots/voting-history.gif" alt="Vote history — scrub through the full timeline of who voted when" width="100%" />
       <p><em>Vote history — scrub through the full timeline of who voted when</em></p>
     </td>
   </tr>
   <tr>
     <td width="50%" align="center">
-      <video src="assets/docs/screenshots/voting-flow.mp4" controls poster="assets/docs/screenshots/voting-flow-poster.jpg" width="100%"></video>
+      <img src="assets/docs/screenshots/voting-flow.gif" alt="Voting flow — cast votes, reveal simultaneously, push estimate to Jira" width="100%" />
       <p><em>Voting flow — cast votes, reveal simultaneously, push estimate to Jira</em></p>
     </td>
     <td width="50%" align="center">
-      <video src="assets/docs/screenshots/worklog-report.mp4" controls poster="assets/docs/screenshots/worklog-report-poster.jpg" width="100%"></video>
+      <img src="assets/docs/screenshots/worklog-report.gif" alt="Jira Worklog — time-tracking report grouped by issue, user, or epic" width="100%" />
       <p><em>Jira Worklog — time-tracking report grouped by issue, user, or epic</em></p>
     </td>
   </tr>

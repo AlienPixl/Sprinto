@@ -262,8 +262,17 @@ export function Dashboard({ rooms, decks, defaultDeckName = "", roomCategories =
                   <div className="room-card__body">
                     <div className="room-card__left">
                       <h3>{room.name}</h3>
-                      <p>{room.activeIssueTitle === "-" ? "No issue selected yet" : room.activeIssueTitle}</p>
-                      <span className="room-card__participants">{room.participantCount} participants</span>
+                      {room.status !== "closed" ? (
+                        <p>{room.activeIssueTitle === "-" ? "No issue selected yet" : room.activeIssueTitle}</p>
+                      ) : null}
+                      <span className="room-card__participants">
+                        {room.participantCount} participants
+                        {room.participantCount > 0 ? (
+                          <span className="room-card__participants-breakdown">
+                            ({room.voterCount} voters, {room.viewerCount} viewers)
+                          </span>
+                        ) : null}
+                      </span>
                     </div>
                     <div className="room-card__right">
                       <span className={`pill pill--${room.status}`}>{room.status}</span>

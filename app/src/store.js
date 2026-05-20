@@ -43,6 +43,14 @@ const defaultEntraSettings = {
   entra_migration_force_at_default: "",
 };
 
+const defaultJiraImportFilters = {
+  conditions: [{ field: "storyPoints", operator: "IS EMPTY", value: null }],
+  connectors: [],
+};
+
+const JIRA_FILTER_FIELD_VALUES = new Set(["storyPoints", "originalEstimate", "status"]);
+const JIRA_FILTER_OPERATOR_VALUES = new Set(["IS EMPTY", "IS NOT EMPTY", "=", "!=", "IN", "NOT IN"]);
+
 const defaultJiraIntegrationSettings = {
   enabled: false,
   baseUrl: "",
@@ -57,6 +65,7 @@ const defaultJiraIntegrationSettings = {
   originalEstimateMinutesPerStoryPoint: 30,
   postCommentEnabled: true,
   postPdfEnabled: true,
+  defaultImportFilters: defaultJiraImportFilters,
 };
 
 const defaultScheduledTasks = {
@@ -180,6 +189,8 @@ const defaultSystemSettings = {
   entra_migration_prompt_login_count: 3,
   entra_migration_force_at_default: "",
   require_story_id: false,
+  default_issue_sort: "issue",
+  default_highlight_mode: "none",
   login_method: "username",
   https_enabled: false,
   tls_cert_path: "",
@@ -261,12 +272,36 @@ function normalizeStringArray(values) {
   return [...new Set(values.map((value) => String(value || "").trim()).filter(Boolean))];
 }
 
+function normalizeJiraFilterConditions(rawConditions) {
+  if (!Array.isArray(rawConditions) || rawConditions.length === 0) {
+    return defaultJiraImportFilters.conditions;
+  }
+  const valid = rawConditions
+    .filter((c) => c && typeof c === "object" && JIRA_FILTER_FIELD_VALUES.has(c.field) && JIRA_FILTER_OPERATOR_VALUES.has(c.operator))
+    .map((c) => {
+      if (c.field === "status") {
+        return { field: c.field, operator: c.operator, value: Array.isArray(c.value) ? c.value.map(String) : [] };
+      }
+      const numVal = c.value === null || c.value === undefined ? null : Number(c.value);
+      return { field: c.field, operator: c.operator, value: Number.isFinite(numVal) ? numVal : null };
+    });
+  return valid.length > 0 ? valid : defaultJiraImportFilters.conditions;
+}
+
 function normalizeJiraIntegrationSettings(settings = {}) {
   const normalizedBaseUrl = String(settings.baseUrl || "").trim().replace(/\/+$/, "");
   const normalizedToken = String(settings.apiToken || "").trim();
   const originalEstimateMode = JIRA_ORIGINAL_ESTIMATE_MODE_VALUES.has(String(settings.originalEstimateMode || "").trim())
     ? String(settings.originalEstimateMode || "").trim()
     : defaultJiraIntegrationSettings.originalEstimateMode;
+
+  const rawFilters = settings.defaultImportFilters;
+  const conditions = normalizeJiraFilterConditions(rawFilters?.conditions);
+  const rawConnectors = Array.isArray(rawFilters?.connectors) ? rawFilters.connectors : [];
+  const connectors = rawConnectors
+    .filter((c) => c === "AND" || c === "OR")
+    .slice(0, Math.max(0, conditions.length - 1));
+  while (connectors.length < conditions.length - 1) connectors.push("AND");
 
   return {
     enabled: Boolean(settings.enabled),
@@ -282,6 +317,7 @@ function normalizeJiraIntegrationSettings(settings = {}) {
     originalEstimateMinutesPerStoryPoint: Math.max(1, Number(settings.originalEstimateMinutesPerStoryPoint) || 30),
     postCommentEnabled: settings.postCommentEnabled !== false,
     postPdfEnabled: settings.postPdfEnabled !== false,
+    defaultImportFilters: { conditions, connectors },
   };
 }
 
@@ -608,7 +644,7 @@ export async function initDatabase() {
     create table if not exists settings (key text primary key, value_json jsonb not null);
     create table if not exists decks (id text primary key, name text unique not null, values_json jsonb not null, is_default boolean not null default false);
     create table if not exists room_categories (id text primary key, name text not null unique, created_at timestamptz not null default now());
-    create table if not exists rooms (id text primary key, name text not null, status text not null, deck_id text not null references decks(id), created_by text not null references users(id), created_at timestamptz not null default now(), status_changed_at timestamptz not null default now(), closed_at timestamptz, highlight_mode text not null default 'none', category_id text references room_categories(id) on delete set null);
+    create table if not exists rooms (id text primary key, name text not null, status text not null, deck_id text not null references decks(id), created_by text not null references users(id), created_at timestamptz not null default now(), status_changed_at timestamptz not null default now(), closed_at timestamptz, highlight_mode text not null default 'none', category_id text references room_categories(id) on delete set null, queue_sort text not null default 'issue');
     create table if not exists room_presence (room_id text not null references rooms(id) on delete cascade, user_id text not null references users(id) on delete cascade, joined_at timestamptz not null default now(), last_seen timestamptz not null default now(), left_at timestamptz, primary key(room_id, user_id));
     create table if not exists issues (id text primary key, room_id text not null references rooms(id) on delete cascade, title text not null, source text not null, state text not null, queue_position integer not null default 0, order_index integer not null default 0, started_at timestamptz, revealed_at timestamptz, closed_at timestamptz, duration_seconds integer not null default 0, summary_json jsonb, playback_json jsonb, external_source text, external_issue_id text, external_issue_key text, external_issue_url text, external_meta_json jsonb, imported_board_id text, imported_sprint_id text, jira_delivery_json jsonb);
     create table if not exists votes (id text primary key, issue_id text not null references issues(id) on delete cascade, user_id text not null references users(id) on delete cascade, value text not null, created_at timestamptz not null default now(), unique(issue_id, user_id));
@@ -623,6 +659,8 @@ export async function initDatabase() {
   await query("alter table users add column if not exists avatar_managed_by_auth_source text not null default ''");
   await query("alter table users add column if not exists theme text not null default 'sprinto'");
   await query("alter table rooms add column if not exists highlight_mode text not null default 'none'");
+  await query("alter table rooms add column if not exists queue_sort text not null default 'issue'");
+  await query("alter table rooms add column if not exists auto_open_jira_url boolean not null default true");
   await query("alter table rooms add column if not exists category_id text references room_categories(id) on delete set null");
   await query("alter table rooms add column if not exists status_changed_at timestamptz");
   await query("alter table issues add column if not exists external_source text");
@@ -1219,6 +1257,8 @@ export async function getSettings() {
     entraMigrationPromptLoginCount: Math.max(1, Number(map.entra_migration_prompt_login_count || 3)),
     entraMigrationForceAtDefault: map.entra_migration_force_at_default || "",
     requireStoryId: map.require_story_id,
+    defaultIssueSort: map.default_issue_sort || "issue",
+    defaultHighlightMode: normalizeRoomHighlightMode(map.default_highlight_mode),
     loginMethod: map.login_method,
     minimumPasswordLength: map.minimum_password_length,
     requirePasswordComplexity: map.require_password_complexity,
@@ -1376,6 +1416,7 @@ export async function getDashboard() {
       r.category_id,
       coalesce(i.title, 'No issue selected yet') as current_issue,
       (select count(*)::int from room_presence rp where rp.room_id = r.id and rp.left_at is null) as participants,
+      (select count(distinct rp2.user_id)::int from room_presence rp2 join user_roles ur on ur.user_id = rp2.user_id join role_permissions rp3 on rp3.role_id = ur.role_id join permissions p on p.id = rp3.permission_id where rp2.room_id = r.id and rp2.left_at is null and p.code = 'room.vote') as voter_count,
       (select count(*)::int from issues done_issue where done_issue.room_id = r.id and done_issue.state = 'done') as issues_completed
     from rooms r
     left join lateral (
@@ -1390,17 +1431,19 @@ export async function getDashboard() {
     categoryId: row.category_id || null,
     currentIssue: row.current_issue,
     participants: row.participants,
+    voterCount: row.voter_count,
     issuesCompleted: row.issues_completed,
   }));
 }
 
-export async function createRoom({ userId, name, deckId, categoryId = null }) {
+export async function createRoom({ userId, name, deckId, categoryId = null, highlightMode = "none" }) {
   return tx(async (client) => {
     const roomId = newId();
     const resolvedCategoryId = categoryId || null;
+    const resolvedHighlightMode = normalizeRoomHighlightMode(highlightMode);
     await client.query(
-      "insert into rooms (id, name, status, deck_id, created_by, status_changed_at, category_id) values ($1, $2, 'open', $3, $4, now(), $5)",
-      [roomId, name, deckId, userId, resolvedCategoryId]
+      "insert into rooms (id, name, status, deck_id, created_by, status_changed_at, category_id, highlight_mode) values ($1, $2, 'open', $3, $4, now(), $5, $6)",
+      [roomId, name, deckId, userId, resolvedCategoryId, resolvedHighlightMode]
     );
     await client.query("insert into room_presence (room_id, user_id, joined_at, last_seen) values ($1, $2, now(), now()) on conflict (room_id, user_id) do update set left_at = null, last_seen = now()", [roomId, userId]);
     return roomId;
@@ -1628,8 +1671,42 @@ export async function revealIssue(roomId, actorUserId) {
   });
 }
 
+export async function cancelActiveIssue(roomId) {
+  return tx(async (client) => {
+    const active = await client.query("select * from issues where room_id = $1 and state = 'active' limit 1", [roomId]);
+    const issue = active.rows[0];
+    if (!issue) throw new Error("No active issue to cancel");
+    await client.query("delete from votes where issue_id = $1", [issue.id]);
+    await client.query("delete from issue_events where issue_id = $1", [issue.id]);
+    await client.query("update issues set queue_position = queue_position + 1 where room_id = $1 and state = 'queued'", [roomId]);
+    await client.query("update issues set state = 'queued', queue_position = 1, order_index = 0, started_at = null where id = $1", [issue.id]);
+    await client.query("update rooms set status = 'open', status_changed_at = now() where id = $1", [roomId]);
+  });
+}
+
 export async function closeRoom(roomId) {
   await query("update rooms set status = 'closed', status_changed_at = now(), closed_at = now() where id = $1", [roomId]);
+}
+
+export async function updateRoomQueueSort(roomId, sort) {
+  const validSorts = new Set(["issue", "reporter", "priority"]);
+  const normalized = validSorts.has(sort) ? sort : "issue";
+  const result = await query(
+    "update rooms set queue_sort = $2 where id = $1 returning id",
+    [roomId, normalized]
+  );
+  if (!result.rows[0]) throw new Error("Room not found");
+  return normalized;
+}
+
+export async function updateRoomAutoOpenJiraUrl(roomId, value) {
+  const normalized = value === false ? false : true;
+  const result = await query(
+    "update rooms set auto_open_jira_url = $2 where id = $1 returning id",
+    [roomId, normalized]
+  );
+  if (!result.rows[0]) throw new Error("Room not found");
+  return normalized;
 }
 
 export async function updateRoomHighlightMode(roomId, highlightMode) {
@@ -1648,13 +1725,22 @@ export async function deleteRoom(roomId) {
   await query("delete from rooms where id = $1", [roomId]);
 }
 
-export async function renameRoom(roomId, name) {
+export async function renameRoom(roomId, name, categoryId) {
   const trimmedName = String(name || "").trim();
   if (!trimmedName) throw new Error("Room name cannot be empty");
-  const result = await query(
-    "update rooms set name = $2 where id = $1 returning id",
-    [roomId, trimmedName]
-  );
+  const resolvedCategoryId = categoryId !== undefined ? (categoryId || null) : undefined;
+  let result;
+  if (resolvedCategoryId !== undefined) {
+    result = await query(
+      "update rooms set name = $2, category_id = $3 where id = $1 returning id",
+      [roomId, trimmedName, resolvedCategoryId]
+    );
+  } else {
+    result = await query(
+      "update rooms set name = $2 where id = $1 returning id",
+      [roomId, trimmedName]
+    );
+  }
   if (!result.rows[0]) throw new Error("Room not found");
   return trimmedName;
 }
@@ -3040,6 +3126,8 @@ export async function getSettingsCompat() {
     compareReleaseVersions(settings.updateLatestVersion, CURRENT_APP_VERSION) > 0;
   return {
     requireStoryId: settings.requireStoryId,
+    defaultIssueSort: settings.defaultIssueSort || "issue",
+    defaultHighlightMode: normalizeRoomHighlightMode(settings.defaultHighlightMode),
     defaultDeck,
     defaultTimerSeconds: settings.defaultTimerSeconds,
     httpsEnabled: settings.httpsEnabled,
@@ -3226,6 +3314,8 @@ export async function getAdminOverviewCompat(user) {
       roomCategoriesEnabled: false,
       roomCategoryRequired: false,
       roomCategories: [],
+      defaultHighlightMode: "none",
+      defaultIssueSort: "issue",
     }),
     access.canManageDecks || access.canManageRoomSettings ? listDecksCompat() : Promise.resolve([]),
     access.canManageSessions ? listSessionsCompat() : Promise.resolve([]),
@@ -3253,6 +3343,8 @@ export async function getDashboardCompat() {
     status: room.status,
     categoryId: room.categoryId || null,
     participantCount: room.participants,
+    voterCount: room.voterCount,
+    viewerCount: room.participants - room.voterCount,
     revealed: room.status === "revealed" || room.status === "closed",
     completedCount: room.issuesCompleted,
     createdAt: demoNow.toISOString(),
@@ -3445,8 +3537,11 @@ export async function getRoomSnapshot(roomId, currentUserId) {
     room: {
       id: room.id,
       name: room.name,
+      categoryId: room.category_id || null,
       deck: room.values_json,
       highlightMode: normalizeRoomHighlightMode(room.highlight_mode),
+      queueSort: (room.queue_sort || "issue"),
+      autoOpenJiraUrl: room.auto_open_jira_url !== false,
       status: room.status,
       createdAt: room.created_at,
       participants: participantRows.rows.map((participant) => {

@@ -5,6 +5,8 @@ import type { AdminOverview, SettingsOverview, User } from "../lib/types";
 
 const baseSettings: SettingsOverview = {
   requireStoryId: false,
+  defaultIssueSort: "issue",
+  defaultHighlightMode: "none",
   defaultDeck: "deck-1",
   defaultTimerSeconds: 180,
   httpsEnabled: false,
@@ -63,6 +65,7 @@ const baseSettings: SettingsOverview = {
       originalEstimateMinutesPerStoryPoint: 30,
       postCommentEnabled: true,
       postPdfEnabled: true,
+      defaultImportFilters: { conditions: [{ field: "storyPoints", operator: "IS EMPTY", value: null }], connectors: [] },
     },
   },
   roomCategoriesEnabled: false,
@@ -291,6 +294,7 @@ function renderAdminPanel({
       onCreateRoomCategory={onCreateRoomCategory}
       onUpdateRoomCategory={onUpdateRoomCategory}
       onDeleteRoomCategory={onDeleteRoomCategory}
+      onFetchJiraStatuses={vi.fn().mockResolvedValue([])}
     />,
   );
 }
@@ -501,6 +505,10 @@ describe("AdminPanel", () => {
         onCreateRole={vi.fn().mockResolvedValue(undefined)}
         onUpdateRole={vi.fn().mockResolvedValue(undefined)}
         onDeleteRole={vi.fn().mockResolvedValue(undefined)}
+        onCreateRoomCategory={vi.fn().mockResolvedValue(undefined)}
+        onUpdateRoomCategory={vi.fn().mockResolvedValue(undefined)}
+        onDeleteRoomCategory={vi.fn().mockResolvedValue(undefined)}
+        onFetchJiraStatuses={vi.fn().mockResolvedValue([])}
       />,
     );
 
@@ -550,6 +558,10 @@ describe("AdminPanel", () => {
         onCreateRole={vi.fn().mockResolvedValue(undefined)}
         onUpdateRole={vi.fn().mockResolvedValue(undefined)}
         onDeleteRole={vi.fn().mockResolvedValue(undefined)}
+        onCreateRoomCategory={vi.fn().mockResolvedValue(undefined)}
+        onUpdateRoomCategory={vi.fn().mockResolvedValue(undefined)}
+        onDeleteRoomCategory={vi.fn().mockResolvedValue(undefined)}
+        onFetchJiraStatuses={vi.fn().mockResolvedValue([])}
       />,
     );
 

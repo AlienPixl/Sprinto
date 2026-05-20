@@ -13,6 +13,7 @@ import {
   JiraImportSyncResult,
   JiraIssueLinkType,
   JiraSprint,
+  JiraStatus,
   JiraWorklogReport,
   JiraWorklogRequest,
   Room,
@@ -422,6 +423,11 @@ export async function listJiraSprints(boardId: string): Promise<JiraSprint[]> {
   return payload.sprints;
 }
 
+export async function listJiraStatuses(): Promise<JiraStatus[]> {
+  const payload = await request<{ statuses: JiraStatus[] }>("/api/jira/statuses");
+  return payload.statuses;
+}
+
 export async function importJiraIssues(
   roomId: string,
   payload: { boardId: string; sprintId?: string; filters: JiraImportFilters; reimportCompletedIssues?: boolean }
@@ -689,6 +695,20 @@ export async function closeRoom(roomId: string): Promise<RoomSnapshot> {
   });
 }
 
+export async function updateRoomAutoOpenJiraUrl(roomId: string, autoOpenJiraUrl: boolean): Promise<RoomSnapshot> {
+  return request<RoomSnapshot>(`/api/rooms/${roomId}/auto-open-jira-url`, {
+    method: "POST",
+    body: JSON.stringify({ autoOpenJiraUrl })
+  });
+}
+
+export async function updateRoomQueueSort(roomId: string, queueSort: "issue" | "reporter" | "priority"): Promise<RoomSnapshot> {
+  return request<RoomSnapshot>(`/api/rooms/${roomId}/queue-sort`, {
+    method: "POST",
+    body: JSON.stringify({ queueSort })
+  });
+}
+
 export async function updateRoomHighlightMode(roomId: string, highlightMode: "none" | "most-frequent" | "highest"): Promise<RoomSnapshot> {
   return request<RoomSnapshot>(`/api/rooms/${roomId}/highlight`, {
     method: "POST",
@@ -696,10 +716,10 @@ export async function updateRoomHighlightMode(roomId: string, highlightMode: "no
   });
 }
 
-export async function renameRoom(roomId: string, name: string): Promise<RoomSnapshot> {
+export async function renameRoom(roomId: string, name: string, categoryId?: string | null): Promise<RoomSnapshot> {
   return request<RoomSnapshot>(`/api/rooms/${roomId}/rename`, {
     method: "POST",
-    body: JSON.stringify({ name })
+    body: JSON.stringify({ name, ...(categoryId !== undefined ? { categoryId } : {}) })
   });
 }
 
@@ -727,6 +747,12 @@ export async function startQueuedIssue(roomId: string, issueId: string): Promise
   return request<RoomSnapshot>(`/api/rooms/${roomId}/start`, {
     method: "POST",
     body: JSON.stringify({ issueId })
+  });
+}
+
+export async function cancelIssue(roomId: string): Promise<RoomSnapshot> {
+  return request<RoomSnapshot>(`/api/rooms/${roomId}/cancel-issue`, {
+    method: "POST"
   });
 }
 

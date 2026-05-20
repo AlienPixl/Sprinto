@@ -11,6 +11,8 @@ export type RoomSummary = {
   status: string;
   categoryId: string | null;
   participantCount: number;
+  voterCount: number;
+  viewerCount: number;
   revealed: boolean;
   completedCount: number;
   createdAt: string;
@@ -77,8 +79,11 @@ export type IssueQueueItem = {
 export type Room = {
   id: string;
   name: string;
+  categoryId: string | null;
   deck: string[];
   highlightMode: "none" | "most-frequent" | "highest";
+  queueSort: "issue" | "reporter" | "priority";
+  autoOpenJiraUrl: boolean;
   status: string;
   createdAt: string;
   participants: Participant[];
@@ -148,6 +153,26 @@ export type Permission = {
   description: string;
 };
 
+export type JiraFilterField = "storyPoints" | "originalEstimate" | "status";
+export type JiraFilterOperator = "IS EMPTY" | "IS NOT EMPTY" | "=" | "!=" | "IN" | "NOT IN";
+export type JiraFilterConnector = "AND" | "OR";
+
+export type JiraFilterCondition = {
+  field: JiraFilterField;
+  operator: JiraFilterOperator;
+  value: number | string | string[] | null;
+};
+
+export type JiraStatus = {
+  id: string;
+  name: string;
+};
+
+export type JiraImportFilters = {
+  conditions: JiraFilterCondition[];
+  connectors: JiraFilterConnector[];
+};
+
 export type JiraIntegrationSettings = {
   enabled: boolean;
   baseUrl: string;
@@ -163,6 +188,7 @@ export type JiraIntegrationSettings = {
   originalEstimateMinutesPerStoryPoint: number;
   postCommentEnabled: boolean;
   postPdfEnabled: boolean;
+  defaultImportFilters: JiraImportFilters;
 };
 
 export type IntegrationsOverview = {
@@ -181,22 +207,6 @@ export type JiraSprint = {
   state: string;
   startDate: string | null;
   endDate: string | null;
-};
-
-export type JiraFilterField = "storyPoints" | "originalEstimate";
-export type JiraFilterOperator = "IS EMPTY" | "IS NOT EMPTY" | "=" | "!=";
-export type JiraFilterConnector = "AND" | "OR";
-
-export type JiraFilterCondition = {
-  field: JiraFilterField;
-  operator: JiraFilterOperator;
-  value: number | null;
-};
-
-export type JiraImportFilters = {
-  conditions: JiraFilterCondition[];
-  connectors: JiraFilterConnector[];
-  importOrder: "issue-key" | "priority";
 };
 
 export type JiraImportPreviewIssue = {
@@ -323,6 +333,8 @@ export type JiraWorklogReport = {
 
 export type SettingsOverview = {
   requireStoryId: boolean;
+  defaultIssueSort: "issue" | "reporter" | "priority";
+  defaultHighlightMode: "none" | "most-frequent" | "highest";
   defaultDeck: string;
   defaultTimerSeconds: number;
   httpsEnabled: boolean;

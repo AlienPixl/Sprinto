@@ -37,6 +37,7 @@ import {
   listJiraAssignableUsers,
   listJiraBoards,
   listJiraSprints,
+  listJiraStatuses,
   joinRoom,
   leaveRoom,
   leaveRoomKeepalive,
@@ -64,7 +65,9 @@ import {
   updateRoomCategory,
   deleteRoomCategory,
   updateDeck,
+  updateRoomAutoOpenJiraUrl,
   updateRoomHighlightMode,
+  updateRoomQueueSort,
   renameRoom,
   updateQueuedIssue,
   updateRole,
@@ -75,6 +78,7 @@ import {
   postJiraIssueReport,
   previewJiraIssues,
   prepareUserEntraMigration,
+  cancelIssue,
 } from "./lib/api";
 import { type ActiveDirectoryTestResult, AdminOverview, Deck, JiraImportFilters, RoomEvent, RoomSnapshot, RoomSummary, SettingsOverview, ThemeId, User } from "./lib/types";
 
@@ -515,6 +519,18 @@ export function App() {
     await refreshRooms();
   }
 
+  async function handleUpdateRoomAutoOpenJiraUrl(autoOpenJiraUrl: boolean) {
+    if (!activeRoomId) return;
+    const next = await updateRoomAutoOpenJiraUrl(activeRoomId, autoOpenJiraUrl);
+    setSnapshot(next);
+  }
+
+  async function handleUpdateRoomQueueSort(queueSort: "issue" | "reporter" | "priority") {
+    if (!activeRoomId) return;
+    const next = await updateRoomQueueSort(activeRoomId, queueSort);
+    setSnapshot(next);
+  }
+
   async function handleUpdateRoomHighlightMode(highlightMode: "none" | "most-frequent" | "highest") {
     if (!activeRoomId) {
       return;
@@ -537,6 +553,15 @@ export function App() {
       return;
     }
     const next = await startQueuedIssue(activeRoomId, issueId);
+    setSnapshot(next);
+    await refreshRooms();
+  }
+
+  async function handleCancelIssue() {
+    if (!activeRoomId) {
+      return;
+    }
+    const next = await cancelIssue(activeRoomId);
     setSnapshot(next);
     await refreshRooms();
   }
@@ -808,9 +833,9 @@ export function App() {
     updateRoute({ view: "dashboard", roomId: null }, true);
   }
 
-  async function handleRenameCurrentRoom(name: string) {
+  async function handleRenameCurrentRoom(name: string, categoryId?: string | null) {
     if (!activeRoomId) return;
-    const next = await renameRoom(activeRoomId, name);
+    const next = await renameRoom(activeRoomId, name, categoryId);
     setSnapshot(next);
     await refreshRooms();
   }
@@ -1109,6 +1134,7 @@ export function App() {
             onCreateRoomCategory={handleCreateRoomCategory}
             onUpdateRoomCategory={handleUpdateRoomCategory}
             onDeleteRoomCategory={handleDeleteRoomCategory}
+            onFetchJiraStatuses={listJiraStatuses}
             overview={overview}
             user={user}
           />
@@ -1154,10 +1180,14 @@ export function App() {
             canDeleteRoom={user.permissions.includes("delete_room")}
             canRenameRoom={user.permissions.includes("rename_room")}
             onRenameRoom={handleRenameCurrentRoom}
+            roomCategories={effectiveSettings?.roomCategories || []}
+            roomCategoriesEnabled={effectiveSettings?.roomCategoriesEnabled || false}
+            roomCategoryRequired={effectiveSettings?.roomCategoryRequired || false}
             canImportJiraIssues={user.permissions.includes("jira_import_issues") && jiraIntegrationEnabled}
             canSendToJira={user.permissions.includes("jira_send") && jiraIntegrationEnabled}
             canVote={user.permissions.includes("vote")}
             currentUserId={user.id}
+            defaultJiraImportFilters={settings?.integrations?.jira?.defaultImportFilters || overview?.settings.integrations.jira?.defaultImportFilters}
             jiraIntegration={settings?.integrations?.jira || overview?.settings.integrations.jira}
             onClose={handleCloseRoom}
             onDeleteQueuedIssue={handleDeleteQueuedIssue}
@@ -1167,14 +1197,18 @@ export function App() {
             onFetchJiraAssignableUsers={(issueId, query) => handleFetchJiraAssignableUsers(activeRoomId, issueId, query)}
             onFetchJiraBoards={listJiraBoards}
             onFetchJiraSprints={listJiraSprints}
+            onFetchJiraStatuses={listJiraStatuses}
             onImportJiraIssues={(payload) => handleImportJiraIssues(activeRoomId, payload)}
             onPostJiraIssueReport={(issueId, payload) => handlePostJiraIssueReport(activeRoomId, issueId, payload)}
             onPreviewJiraIssues={handlePreviewJiraIssues}
             onQueueIssue={handleQueueIssue}
             requireStoryId={Boolean(settings?.requireStoryId)}
             onReveal={handleReveal}
+            onCancelIssue={handleCancelIssue}
             onStartQueuedIssue={handleStartQueuedIssue}
+            onUpdateAutoOpenJiraUrl={handleUpdateRoomAutoOpenJiraUrl}
             onUpdateHighlightMode={handleUpdateRoomHighlightMode}
+            onUpdateQueueSort={handleUpdateRoomQueueSort}
             onUpdateQueuedIssue={handleUpdateQueuedIssue}
             onVote={handleVote}
             snapshot={snapshot}

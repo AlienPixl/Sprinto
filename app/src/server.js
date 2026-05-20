@@ -37,6 +37,7 @@ import {
   createSimplePdfBuffer,
   getJiraBoard,
   listJiraAssignableUsers,
+  getJiraStatuses,
   listJiraBoards,
   listJiraIssueLinkTypes,
   listJiraIssues,
@@ -101,6 +102,7 @@ import {
   saveRoleCompat,
   saveUserCompat,
   revealIssue,
+  cancelActiveIssue,
   reactivateUser,
   resolveRoleNamesForAdGroups,
   resolveRoleNamesForEntraClaims,
@@ -113,7 +115,9 @@ import {
   startQueuedIssue,
   touchPresence,
   updateIssueJiraDeliveryStatus,
+  updateRoomAutoOpenJiraUrl,
   updateRoomHighlightMode,
+  updateRoomQueueSort,
   updateQueueIssue,
   updateCurrentUserProfile,
   upsertSettings,
@@ -1481,6 +1485,12 @@ app.get("/api/auth/entra/callback", async (req, res) => {
 
   if (req.query.error) {
     const providerMessage = String(req.query.error_description || req.query.error || "").trim();
+    await logAudit(null, "login.failed", "session", {
+      provider: "entra",
+      reason: "provider_error",
+      error: String(req.query.error || ""),
+      description: providerMessage || "Microsoft Entra sign-in was cancelled.",
+    });
     return redirectToAuthError(res, settings, returnToPath, providerMessage || "Microsoft Entra sign-in was cancelled.");
   }
 
@@ -1494,6 +1504,7 @@ app.get("/api/auth/entra/callback", async (req, res) => {
     return redirectToAuthError(res, settings, returnToPath, "Microsoft Entra sign-in did not return an authorization code.");
   }
   if (!state || state !== expectedState) {
+    await logAudit(null, "login.failed", "session", { provider: "entra", reason: "state_mismatch" });
     return redirectToAuthError(res, settings, returnToPath, "Microsoft Entra sign-in state validation failed.");
   }
   if (!expectedNonce || !codeVerifier) {
@@ -1569,6 +1580,11 @@ app.get("/api/auth/entra/callback", async (req, res) => {
         error instanceof Error ? error.message : "You no longer have access to Sprinto. Contact your administrator.",
       );
     }
+    await logAudit(null, "login.failed", "session", {
+      provider: "entra",
+      reason: "error",
+      description: error instanceof Error ? error.message : "Microsoft Entra sign-in failed.",
+    });
     redirectToAuthError(res, settings, returnToPath, error instanceof Error ? error.message : "Microsoft Entra sign-in failed.");
   }
 });
@@ -1592,6 +1608,7 @@ app.post("/api/auth/login", async (req, res) => {
         if (adProfile && adProfile.externalId && adProfile.username) {
           const matchingEntraUsers = adProfile.email ? await findActiveEntraUsersByEmail(adProfile.email) : [];
           if (matchingEntraUsers.length === 1) {
+            await logAudit(null, "login.failed", "session", { identifier, method, provider: "ad", reason: "entra_migration_completed" });
             throw new Error("This account has already been migrated to Microsoft Entra. Use Sign in with Microsoft.");
           }
           if (matchingEntraUsers.length > 1) {
@@ -1601,6 +1618,7 @@ app.post("/api/auth/login", async (req, res) => {
           const matchedRoles = await resolveRoleNamesForAdGroups(adProfile.groupIdentifiers);
           if (matchedRoles.length === 0) {
             await deactivateActiveDirectoryUserByExternalId(adProfile.externalId);
+            await logAudit(null, "login.failed", "session", { identifier, method, provider: "ad", reason: "no_matching_role_group" });
             throw new Error("You do not have access to Sprinto.");
           }
 
@@ -1618,7 +1636,10 @@ app.post("/api/auth/login", async (req, res) => {
       authenticateLocalUser: findUserForLogin,
     });
 
-    if (!user) return json(res, { error: "Login failed. Check your credentials and login method." }, 401);
+    if (!user) {
+      await logAudit(null, "login.failed", "session", { identifier, method, reason: "invalid_credentials" });
+      return json(res, { error: "Login failed. Check your credentials and login method." }, 401);
+    }
 
     const migrationStatus = buildEntraMigrationStatus(user, settings);
     if (migrationStatus) {
@@ -1784,7 +1805,9 @@ app.post("/api/rooms", requireUser, async (req, res) => {
   const decks = await listDecksCompat();
   const selectedDeck = decks.find((deck) => deck.name === req.body?.deckName) || decks.find((deck) => deck.isDefault) || decks[0];
   const categoryId = String(req.body?.categoryId || "").trim() || null;
-  const roomId = await createRoom({ userId: req.user.id, name, deckId: selectedDeck?.id, categoryId });
+  const roomSettings = await getSettings();
+  const highlightMode = roomSettings.defaultHighlightMode || "none";
+  const roomId = await createRoom({ userId: req.user.id, name, deckId: selectedDeck?.id, categoryId, highlightMode });
   await logAudit(req.user.id, "room.create", "room", { roomId, name, categoryId });
   await publishDashboard();
   await publishRoom(roomId);
@@ -1896,6 +1919,19 @@ app.post("/api/rooms/:roomId/reveal", requireUser, async (req, res) => {
   }
 });
 
+app.post("/api/rooms/:roomId/cancel-issue", requireUser, async (req, res) => {
+  if (!capabilitiesFor(req.user).canManageRoom) return json(res, { error: "Forbidden" }, 403);
+  try {
+    await cancelActiveIssue(req.params.roomId);
+    await logAudit(req.user.id, "room.issue.cancel", "room", { roomId: req.params.roomId });
+    await publishRoom(req.params.roomId);
+    await publishDashboard();
+    json(res, await getRoomSnapshot(req.params.roomId, req.user.id));
+  } catch (error) {
+    json(res, { error: error.message }, 400);
+  }
+});
+
 app.post("/api/rooms/:roomId/close", requireUser, async (req, res) => {
   if (!capabilitiesFor(req.user).canManageRoom) return json(res, { error: "Forbidden" }, 403);
   await closeRoom(req.params.roomId);
@@ -1903,6 +1939,28 @@ app.post("/api/rooms/:roomId/close", requireUser, async (req, res) => {
   await publishRoom(req.params.roomId);
   await publishDashboard();
   json(res, await getRoomSnapshot(req.params.roomId, req.user.id));
+});
+
+app.post("/api/rooms/:roomId/auto-open-jira-url", requireUser, async (req, res) => {
+  if (!capabilitiesFor(req.user).canManageRoom) return json(res, { error: "Forbidden" }, 403);
+  try {
+    await updateRoomAutoOpenJiraUrl(req.params.roomId, req.body?.autoOpenJiraUrl);
+    await publishRoom(req.params.roomId);
+    json(res, await getRoomSnapshot(req.params.roomId, req.user.id));
+  } catch (error) {
+    json(res, { error: error.message }, 400);
+  }
+});
+
+app.post("/api/rooms/:roomId/queue-sort", requireUser, async (req, res) => {
+  if (!capabilitiesFor(req.user).canManageRoom) return json(res, { error: "Forbidden" }, 403);
+  try {
+    await updateRoomQueueSort(req.params.roomId, req.body?.queueSort);
+    await publishRoom(req.params.roomId);
+    json(res, await getRoomSnapshot(req.params.roomId, req.user.id));
+  } catch (error) {
+    json(res, { error: error.message }, 400);
+  }
 });
 
 app.post("/api/rooms/:roomId/highlight", requireUser, async (req, res) => {
@@ -1920,7 +1978,7 @@ app.post("/api/rooms/:roomId/highlight", requireUser, async (req, res) => {
 app.post("/api/rooms/:roomId/rename", requireUser, async (req, res) => {
   if (!capabilitiesFor(req.user).canRenameRoom) return json(res, { error: "Forbidden" }, 403);
   try {
-    const newName = await renameRoom(req.params.roomId, req.body?.name);
+    const newName = await renameRoom(req.params.roomId, req.body?.name, req.body?.categoryId);
     await logAudit(req.user.id, "room.rename", "room", { roomId: req.params.roomId, name: newName });
     await publishRoom(req.params.roomId);
     await publishDashboard();
@@ -1947,6 +2005,15 @@ app.get("/api/rooms/:roomId/history/:issueId", requireUser, async (req, res) => 
 
 app.post("/api/rooms/:roomId/reset", requireUser, async (req, res) => {
   json(res, await getRoomSnapshot(req.params.roomId, req.user.id));
+});
+
+app.get("/api/jira/statuses", requireUser, requireJiraImport, async (_req, res) => {
+  try {
+    const settings = await getSettings();
+    json(res, { statuses: await getJiraStatuses(settings) });
+  } catch (error) {
+    json(res, { error: error instanceof Error ? error.message : "Failed to load Jira statuses." }, 400);
+  }
 });
 
 app.get("/api/jira/boards", requireUser, requireJiraImport, async (_req, res) => {
@@ -2639,9 +2706,13 @@ app.put("/api/admin/settings/rooms", requireUser, requireManageRoomSettings, asy
   const decks = await listDecksCompat();
   const defaultDeck = decks.find((deck) => deck.name === settings.defaultDeck);
 
+  const validSorts = new Set(["issue", "reporter", "priority"]);
+  const validHighlightModes = new Set(["none", "most-frequent", "highest"]);
   await upsertSettings({
     default_timer_seconds: Number(settings.defaultTimerSeconds) || 1,
     require_story_id: Boolean(settings.requireStoryId),
+    default_issue_sort: validSorts.has(settings.defaultIssueSort) ? settings.defaultIssueSort : "issue",
+    default_highlight_mode: validHighlightModes.has(settings.defaultHighlightMode) ? settings.defaultHighlightMode : "none",
     default_deck_id: defaultDeck?.id || decks.find((deck) => deck.isDefault)?.id || decks[0]?.id,
     room_categories_enabled: Boolean(settings.roomCategoriesEnabled),
     room_category_required: Boolean(settings.roomCategoryRequired),

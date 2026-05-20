@@ -407,10 +407,6 @@ async function listJiraGroupMembers(settings, groupId) {
   return [...new Map(users.map((user) => [user.accountId, user])).values()];
 }
 
-function normalizeImportOrder(value) {
-  return value === "priority" ? "priority" : "issue-key";
-}
-
 function extractIssueKeyParts(key) {
   const value = String(key || "").trim().toUpperCase();
   const match = value.match(/^([A-Z][A-Z0-9_]*)-(\d+)$/);
@@ -433,43 +429,8 @@ function compareIssueKeys(left, right) {
   return String(left?.title || "").localeCompare(String(right?.title || ""));
 }
 
-function priorityWeight(priority) {
-  const name = String(priority?.name || "").trim().toLowerCase();
-  const idNumber = Number(priority?.id);
-  const namedWeights = {
-    highest: 0,
-    high: 1,
-    medium: 2,
-    low: 3,
-    lowest: 4,
-  };
-
-  if (Object.prototype.hasOwnProperty.call(namedWeights, name)) {
-    return namedWeights[name];
-  }
-  if (Number.isFinite(idNumber)) {
-    return idNumber;
-  }
-  return 999;
-}
-
-function sortImportedIssues(issues, importOrder) {
-  const normalizedOrder = normalizeImportOrder(importOrder);
-  const sorted = [...issues];
-
-  if (normalizedOrder === "priority") {
-    sorted.sort((left, right) => {
-      const priorityComparison = priorityWeight(left.priority) - priorityWeight(right.priority);
-      if (priorityComparison !== 0) {
-        return priorityComparison;
-      }
-      return compareIssueKeys(left, right);
-    });
-    return sorted;
-  }
-
-  sorted.sort(compareIssueKeys);
-  return sorted;
+function sortImportedIssues(issues) {
+  return [...issues].sort(compareIssueKeys);
 }
 
 function buildJiraIssuePath({ boardId, sprintId, storyPointsFieldId, startAt }) {
@@ -480,7 +441,14 @@ function buildJiraIssuePath({ boardId, sprintId, storyPointsFieldId, startAt }) 
   return `/rest/agile/1.0/board/${encodeURIComponent(boardId)}/issue?startAt=${startAt}&maxResults=50&fields=${fields}`;
 }
 
-function evaluateFilterCondition(condition, storyPointsValue, originalEstimateSeconds) {
+function evaluateFilterCondition(condition, storyPointsValue, originalEstimateSeconds, statusName) {
+  if (condition.field === "status") {
+    const actual = String(statusName || "").toLowerCase();
+    const values = Array.isArray(condition.value) ? condition.value : [];
+    if (condition.operator === "IN") return values.some((v) => String(v).toLowerCase() === actual);
+    if (condition.operator === "NOT IN") return !values.some((v) => String(v).toLowerCase() === actual);
+    return true;
+  }
   const rawValue = condition.field === "storyPoints" ? storyPointsValue : originalEstimateSeconds;
   const isEmpty = rawValue === null || rawValue === undefined || rawValue === "";
   if (condition.operator === "IS EMPTY") return isEmpty;
@@ -508,12 +476,13 @@ function parseOriginalEstimateSeconds(timetracking) {
 function matchesIssueImportFilters(issue, storyPointsFieldId, filters) {
   const storyPointsValue = issue?.fields?.[storyPointsFieldId];
   const originalEstimateSeconds = parseOriginalEstimateSeconds(issue?.fields?.timetracking);
+  const statusName = String(issue?.fields?.status?.name || "");
 
   if (!filters.conditions || filters.conditions.length === 0) return true;
 
-  let result = evaluateFilterCondition(filters.conditions[0], storyPointsValue, originalEstimateSeconds);
+  let result = evaluateFilterCondition(filters.conditions[0], storyPointsValue, originalEstimateSeconds, statusName);
   for (let i = 1; i < filters.conditions.length; i++) {
-    const condResult = evaluateFilterCondition(filters.conditions[i], storyPointsValue, originalEstimateSeconds);
+    const condResult = evaluateFilterCondition(filters.conditions[i], storyPointsValue, originalEstimateSeconds, statusName);
     const connector = filters.connectors?.[i - 1] ?? "AND";
     result = connector === "OR" ? result || condResult : result && condResult;
   }
@@ -548,6 +517,14 @@ function mapImportedJiraIssue(issue, jira, storyPointsFieldId) {
   };
 }
 
+export async function getJiraStatuses(settings) {
+  const jira = ensureJiraConfigured(settings);
+  const result = await jiraRequest(jira, "/rest/api/2/status");
+  return Array.isArray(result)
+    ? result.map((s) => ({ id: String(s.id), name: String(s.name || "") }))
+    : [];
+}
+
 export async function listJiraIssues(settings, { boardId, sprintId, filters = {} }) {
   const jira = ensureJiraConfigured(settings);
   const storyPointsFieldId = await resolveStoryPointsFieldId(jira);
@@ -570,8 +547,7 @@ export async function listJiraIssues(settings, { boardId, sprintId, filters = {}
   return sortImportedIssues(
     issues
     .filter((issue) => matchesIssueImportFilters(issue, storyPointsFieldId, filters))
-    .map((issue) => mapImportedJiraIssue(issue, jira, storyPointsFieldId)),
-    filters.importOrder
+    .map((issue) => mapImportedJiraIssue(issue, jira, storyPointsFieldId))
   );
 }
 

@@ -335,7 +335,6 @@ describe("jira helpers", () => {
       filters: {
         conditions: [{ field: "storyPoints", operator: "IS EMPTY", value: null }],
         connectors: [],
-        importOrder: "priority",
       },
     });
 
@@ -408,7 +407,6 @@ describe("jira helpers", () => {
       filters: {
         conditions: [],
         connectors: [],
-        importOrder: "issue-key",
       },
     });
 

@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { Issue, IssueEvent, IssueQueueItem, JiraAssignableUser, JiraBoard, JiraFilterConnector, JiraFilterOperator, JiraImportFilters, JiraImportPreviewIssue, JiraImportSyncResult, JiraIntegrationSettings, JiraSprint, Participant, RoomSnapshot, Vote } from "../lib/types";
+import { Issue, IssueEvent, IssueQueueItem, JiraAssignableUser, JiraBoard, JiraFilterConnector, JiraFilterOperator, JiraImportFilters, JiraImportPreviewIssue, JiraImportSyncResult, JiraIntegrationSettings, JiraSprint, JiraStatus, Participant, RoomCategory, RoomSnapshot, Vote } from "../lib/types";
 
 type HighlightMode = "none" | "most-frequent" | "highest";
 type JiraSuggestionStrategy = "highest" | "most-frequent" | "median" | "average";
@@ -66,15 +66,19 @@ type RoomViewProps = {
   canVote: boolean;
   onVote: (userId: string, value: string) => Promise<void>;
   onReveal: () => Promise<void>;
+  onCancelIssue: () => Promise<void>;
   onClose: () => Promise<void>;
   onDeleteRoom: () => Promise<void>;
   onQueueIssue: (title: string, storyId?: string) => Promise<void>;
   onUpdateQueuedIssue: (issueId: string, title: string, storyId?: string, source?: string) => Promise<void>;
   onDeleteQueuedIssue: (issueId: string) => Promise<void>;
   onStartQueuedIssue: (issueId: string) => Promise<void>;
+  onUpdateAutoOpenJiraUrl: (value: boolean) => Promise<void>;
   onUpdateHighlightMode: (highlightMode: HighlightMode) => Promise<void>;
+  onUpdateQueueSort: (sort: QueueSortValue) => Promise<void>;
   onFetchJiraBoards: () => Promise<JiraBoard[]>;
   onFetchJiraSprints: (boardId: string) => Promise<JiraSprint[]>;
+  onFetchJiraStatuses: () => Promise<JiraStatus[]>;
   onPreviewJiraIssues: (boardId: string, sprintId: string | undefined, filters: JiraImportFilters) => Promise<JiraImportPreviewIssue[]>;
   onImportJiraIssues: (payload: {
     boardId: string;
@@ -105,8 +109,12 @@ type RoomViewProps = {
   canImportJiraIssues: boolean;
   canSendToJira: boolean;
   jiraIntegration?: JiraIntegrationSettings;
+  defaultJiraImportFilters?: JiraImportFilters;
   requireStoryId: boolean;
-  onRenameRoom: (name: string) => Promise<void>;
+  onRenameRoom: (name: string, categoryId?: string | null) => Promise<void>;
+  roomCategories?: RoomCategory[];
+  roomCategoriesEnabled?: boolean;
+  roomCategoryRequired?: boolean;
 };
 
 const TIMELINE_MIN = -12;
@@ -116,8 +124,8 @@ const TIMELINE_END = 88;
 const TIMELINE_START_PRESENCE_GRACE_MS = 250;
 const HIGHLIGHT_OPTIONS: Array<{ value: HighlightMode; label: string }> = [
   { value: "none", label: "No highlight" },
-  { value: "most-frequent", label: "Highlight most frequent card" },
-  { value: "highest", label: "Highlight highest value card" },
+  { value: "most-frequent", label: "Most frequented card" },
+  { value: "highest", label: "Highest value card" },
 ];
 
 export function RoomView({
@@ -126,15 +134,19 @@ export function RoomView({
   canVote,
   onVote,
   onReveal,
+  onCancelIssue,
   onClose,
   onDeleteRoom,
   onQueueIssue,
   onUpdateQueuedIssue,
   onDeleteQueuedIssue,
   onStartQueuedIssue,
+  onUpdateAutoOpenJiraUrl,
   onUpdateHighlightMode,
+  onUpdateQueueSort,
   onFetchJiraBoards,
   onFetchJiraSprints,
+  onFetchJiraStatuses,
   onPreviewJiraIssues,
   onImportJiraIssues,
   onApplyJiraIssueEstimate,
@@ -150,8 +162,12 @@ export function RoomView({
   canImportJiraIssues,
   canSendToJira,
   jiraIntegration,
+  defaultJiraImportFilters,
   requireStoryId,
-  onRenameRoom
+  onRenameRoom,
+  roomCategories = [],
+  roomCategoriesEnabled = false,
+  roomCategoryRequired = false
 }: RoomViewProps) {
   const DEFAULT_QUEUE_PAGE_SIZE = 5;
   const DEFAULT_HISTORY_PAGE_SIZE = 6;
@@ -163,38 +179,39 @@ export function RoomView({
   const [queueDeleteTarget, setQueueDeleteTarget] = useState<IssueQueueItem | null>(null);
   const [queueDeleteBusy, setQueueDeleteBusy] = useState(false);
   const [closePokerConfirmOpen, setClosePokerConfirmOpen] = useState(false);
+  const [cancelIssueConfirmOpen, setCancelIssueConfirmOpen] = useState(false);
   const [roomDeleteOpen, setRoomDeleteOpen] = useState(false);
   const [roomDeleteBusy, setRoomDeleteBusy] = useState(false);
   const [roomRenameOpen, setRoomRenameOpen] = useState(false);
   const [roomRenameName, setRoomRenameName] = useState("");
+  const [roomRenameCategoryId, setRoomRenameCategoryId] = useState<string>("");
   const [roomRenameBusy, setRoomRenameBusy] = useState(false);
   const [selectedIssueId, setSelectedIssueId] = useState<string | null>(null);
   const [historyPlayback, setHistoryPlayback] = useState(100);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [shareCopied, setShareCopied] = useState(false);
-  const [highlightMenuOpen, setHighlightMenuOpen] = useState(false);
+  const [roomSettingsOpen, setRoomSettingsOpen] = useState(false);
   const [jiraOpen, setJiraOpen] = useState(false);
   const [jiraReimportOpen, setJiraReimportOpen] = useState(false);
   const [jiraReimportCompletedChoice, setJiraReimportCompletedChoice] = useState<"include" | "skip" | null>(null);
   const [jiraPreviewOpen, setJiraPreviewOpen] = useState(false);
   const [jiraBoards, setJiraBoards] = useState<JiraBoard[]>([]);
   const [jiraSprints, setJiraSprints] = useState<JiraSprint[]>([]);
+  const [jiraStatuses, setJiraStatuses] = useState<JiraStatus[]>([]);
   const [jiraPreviewIssues, setJiraPreviewIssues] = useState<JiraImportPreviewIssue[]>([]);
   const [jiraBoardId, setJiraBoardId] = useState("");
   const [jiraSprintId, setJiraSprintId] = useState("");
   const [jiraLoading, setJiraLoading] = useState(false);
   const [jiraMessage, setJiraMessage] = useState("");
   const [jiraMessageTone, setJiraMessageTone] = useState<"info" | "success" | "warning" | "error">("info");
-  const [jiraFilters, setJiraFilters] = useState<JiraImportFilters>({
-    conditions: [{ field: "storyPoints", operator: "IS EMPTY", value: null }],
-    connectors: [],
-    importOrder: "issue-key",
-  });
+  const [jiraFilters, setJiraFilters] = useState<JiraImportFilters>(
+    defaultJiraImportFilters ?? { conditions: [{ field: "storyPoints", operator: "IS EMPTY", value: null }], connectors: [] }
+  );
   const [queuePage, setQueuePage] = useState(0);
   const [historyPage, setHistoryPage] = useState(0);
   const [queueFilter, setQueueFilter] = useState<QueueFilterValue>("waiting");
-  const [queueSort, setQueueSort] = useState<QueueSortValue>("issue");
+  const queueSort: QueueSortValue = (snapshot.room.queueSort as QueueSortValue) || "issue";
   const [jiraActionOpen, setJiraActionOpen] = useState(false);
   const [jiraActionBusy, setJiraActionBusy] = useState(false);
   const [jiraActionSuggestion, setJiraActionSuggestion] = useState<JiraSuggestionStrategy>("highest");
@@ -226,7 +243,11 @@ export function RoomView({
   const leaveTimersRef = useRef<number[]>([]);
   const timelineTrackRef = useRef<HTMLDivElement | null>(null);
   const draggingTimelineRef = useRef(false);
-  const highlightMenuRef = useRef<HTMLDivElement | null>(null);
+  const [jiraStatusPickerIndex, setJiraStatusPickerIndex] = useState(-1);
+  const jiraStatusPickerRef = useRef<HTMLDivElement | null>(null);
+  const roomSettingsRef = useRef<HTMLDivElement | null>(null);
+  const roomSettingsButtonRef = useRef<HTMLButtonElement | null>(null);
+  const prevIssueIdRef = useRef<string>(snapshot.room.currentIssue.id);
   const jiraAssigneePickerRef = useRef<HTMLDivElement | null>(null);
   const jiraAssigneeSearchInputRef = useRef<HTMLInputElement | null>(null);
   const jiraAssigneeOptionsCacheRef = useRef<Record<string, JiraAssignableUser[]>>({});
@@ -251,7 +272,7 @@ export function RoomView({
     setHistoryOpen(false);
     setShareOpen(false);
     setShareCopied(false);
-    setHighlightMenuOpen(false);
+    setRoomSettingsOpen(false);
     setJiraOpen(false);
     setJiraPreviewOpen(false);
     setQueuedStoryId("");
@@ -296,7 +317,12 @@ export function RoomView({
     setSelectedIssueId(null);
     setHistoryPlayback(100);
     setQueuePage(0);
-  }, [snapshot.room.currentIssue.id]);
+    const issue = snapshot.room.currentIssue;
+    if (issue.id !== prevIssueIdRef.current && autoOpenJiraUrl && issue.externalSource === "jira" && issue.externalIssueUrl) {
+      window.open(issue.externalIssueUrl, "_blank", "noopener,noreferrer");
+    }
+    prevIssueIdRef.current = issue.id;
+  }, [snapshot.room.currentIssue.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     setHistoryPlayback(100);
@@ -342,6 +368,7 @@ export function RoomView({
       jiraPreviewOpen ||
       shareOpen ||
       closePokerConfirmOpen ||
+      cancelIssueConfirmOpen ||
       Boolean(queueDeleteTarget) ||
       roomDeleteOpen;
 
@@ -355,7 +382,7 @@ export function RoomView({
     return () => {
       document.body.style.overflow = previousOverflow;
     };
-  }, [jiraReimportOpen, jiraPreviewOpen, shareOpen, closePokerConfirmOpen, queueDeleteTarget, roomDeleteOpen, roomRenameOpen]);
+  }, [jiraReimportOpen, jiraPreviewOpen, shareOpen, closePokerConfirmOpen, cancelIssueConfirmOpen, queueDeleteTarget, roomDeleteOpen, roomRenameOpen]);
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -376,8 +403,9 @@ export function RoomView({
         setShareOpen(false);
         setJiraOpen(false);
         setJiraActionOpen(false);
-        setHighlightMenuOpen(false);
+        setRoomSettingsOpen(false);
         setClosePokerConfirmOpen(false);
+        setCancelIssueConfirmOpen(false);
         if (!queueDeleteBusy) {
           setQueueDeleteTarget(null);
         }
@@ -403,17 +431,17 @@ export function RoomView({
 
   useEffect(() => {
     function handlePointerDown(event: PointerEvent) {
-      if (highlightMenuOpen && highlightMenuRef.current && !highlightMenuRef.current.contains(event.target as Node)) {
-        setHighlightMenuOpen(false);
-      }
       if (jiraActionAssigneeOpen && jiraAssigneePickerRef.current && !jiraAssigneePickerRef.current.contains(event.target as Node)) {
         setJiraActionAssigneeOpen(false);
+      }
+      if (jiraStatusPickerIndex >= 0 && jiraStatusPickerRef.current && !jiraStatusPickerRef.current.contains(event.target as Node)) {
+        setJiraStatusPickerIndex(-1);
       }
     }
 
     window.addEventListener("pointerdown", handlePointerDown);
     return () => window.removeEventListener("pointerdown", handlePointerDown);
-  }, [highlightMenuOpen, jiraActionAssigneeOpen]);
+  }, [jiraActionAssigneeOpen, jiraStatusPickerIndex]);
 
   const displayIssue: Issue = selectedHistoryIssue ?? snapshot.room.currentIssue;
   const displayVotes = historyFrame?.visibleVotes ?? displayIssue.votes;
@@ -453,6 +481,7 @@ export function RoomView({
     (participant) => participant.canVote
   );
   const highlightMode = snapshot.room.highlightMode;
+  const autoOpenJiraUrl = snapshot.room.autoOpenJiraUrl !== false;
   const jiraActionIssue = snapshot.room.currentIssue;
   const jiraMinutesPerStoryPoint = Math.max(1, Number(jiraIntegration?.originalEstimateMinutesPerStoryPoint) || 30);
   const jiraStoryPointsEnabled = canSendToJira && Boolean(jiraIntegration?.writeStoryPointsEnabled);
@@ -481,8 +510,6 @@ export function RoomView({
     () => getHighlightedValues(displayVotes, snapshot.room.deck, displayRevealed, highlightMode),
     [displayRevealed, displayVotes, highlightMode, snapshot.room.deck]
   );
-  const selectedHighlightLabel =
-    HIGHLIGHT_OPTIONS.find((option) => option.value === highlightMode)?.label ?? "No highlight";
   const jiraExistingEstimateDelivery = jiraActionIssue.jiraDeliveryStatus?.estimate;
   const jiraExistingReportDelivery = jiraActionIssue.jiraDeliveryStatus?.report;
   const jiraExistingAssigneeDelivery = jiraActionIssue.jiraDeliveryStatus?.assignee;
@@ -499,7 +526,7 @@ export function RoomView({
     [jiraActionAssigneeOptions, jiraActionAssigneeSearch]
   );
   const jiraActionGroupedAssigneeOptions = useMemo(
-    () => groupJiraAssignableUsersByParticipants(jiraActionFilteredAssigneeOptions, snapshot.room.participants),
+    () => groupJiraAssignableUsersByParticipants(jiraActionFilteredAssigneeOptions, snapshot.room.participants.filter((p) => p.canVote)),
     [jiraActionFilteredAssigneeOptions, snapshot.room.participants]
   );
   const selectedJiraBoard = useMemo(
@@ -511,7 +538,7 @@ export function RoomView({
     () => summarizeJiraImportScope(snapshot, jiraBoardId, jiraSprintRequired ? jiraSprintId : ""),
     [jiraBoardId, jiraSprintId, jiraSprintRequired, snapshot]
   );
-  const isQueueOverlayOpen = jiraActionOpen || jiraOpen || historyOpen || highlightMenuOpen;
+  const isQueueOverlayOpen = jiraActionOpen || jiraOpen || historyOpen || roomSettingsOpen;
 
   function openExternalUrl(url?: string | null) {
     if (!url || typeof window === "undefined") return;
@@ -557,7 +584,7 @@ export function RoomView({
     setJiraPreviewOpen(false);
     setJiraReimportOpen(false);
     setHistoryOpen(false);
-    setHighlightMenuOpen(false);
+    setRoomSettingsOpen(false);
   }
 
   function openJiraActionModal() {
@@ -592,13 +619,13 @@ export function RoomView({
     setHistoryOpen(true);
   }
 
-  function openHighlightPanel() {
-    if (highlightMenuOpen) {
-      setHighlightMenuOpen(false);
+  function openRoomSettingsPanel() {
+    if (roomSettingsOpen) {
+      setRoomSettingsOpen(false);
       return;
     }
     closeQueueOverlayPanels();
-    setHighlightMenuOpen(true);
+    setRoomSettingsOpen(true);
   }
 
   async function handleRevealAndOpenJira() {
@@ -742,43 +769,32 @@ export function RoomView({
 
     const measureCapacity = (
       element: HTMLDivElement,
-      paginationElement: HTMLDivElement | null,
       itemSelector: string,
       fallback: number,
       apply: (next: number) => void
     ) => {
       const computedStyle = window.getComputedStyle(element);
       const gap = Number.parseFloat(computedStyle.rowGap || computedStyle.gap || "0") || 0;
+      const paddingBottom = Number.parseFloat(computedStyle.paddingBottom || "0") || 0;
       const item = element.querySelector<HTMLElement>(itemSelector);
-      const footer = document.querySelector<HTMLElement>(".app-footer");
       if (!item) {
         apply(fallback);
         return;
       }
-
       const itemHeight = item.getBoundingClientRect().height;
-      const listRect = element.getBoundingClientRect();
-      const paginationRect = paginationElement?.getBoundingClientRect();
-      const footerStyle = footer ? window.getComputedStyle(footer) : null;
-      const footerMarginTop = footerStyle ? Number.parseFloat(footerStyle.marginTop || "0") || 0 : 0;
-      const footerMarginBottom = footerStyle ? Number.parseFloat(footerStyle.marginBottom || "0") || 0 : 0;
-      const footerHeight = footer ? footer.getBoundingClientRect().height : 0;
-      const reservedHeight = (paginationRect?.height || 0) + 28;
-      const footerReserve = footerHeight + footerMarginTop + footerMarginBottom;
-      const viewportBottom = window.innerHeight - footerReserve;
-      const availableHeight = Math.max(0, viewportBottom - listRect.top - reservedHeight);
-      if (!Number.isFinite(itemHeight) || itemHeight <= 0 || !Number.isFinite(availableHeight) || availableHeight <= 0) {
+      const listHeight = element.getBoundingClientRect().height;
+      if (!Number.isFinite(itemHeight) || itemHeight <= 0 || !Number.isFinite(listHeight) || listHeight <= 0) {
         apply(fallback);
         return;
       }
-
-      const next = Math.max(1, Math.floor((availableHeight + gap) / (itemHeight + gap)));
+      const usableHeight = Math.max(0, listHeight - paddingBottom);
+      const next = Math.max(1, Math.floor((usableHeight + gap) / (itemHeight + gap)));
       apply(next);
     };
 
     const updateQueueCapacity = () => {
       if (queueListElement) {
-        measureCapacity(queueListElement, queuePaginationElement, ".queue-item:not(.queue-item--placeholder)", DEFAULT_QUEUE_PAGE_SIZE, (next) =>
+        measureCapacity(queueListElement, ".queue-item:not(.queue-item--placeholder)", DEFAULT_QUEUE_PAGE_SIZE, (next) =>
           setQueuePageSize((current) => (current === next ? current : next))
         );
       }
@@ -786,7 +802,7 @@ export function RoomView({
 
     const updateHistoryCapacity = () => {
       if (historyListElement) {
-        measureCapacity(historyListElement, historyPaginationElement, ".queue-option-item:not(.queue-option-item--placeholder)", DEFAULT_HISTORY_PAGE_SIZE, (next) =>
+        measureCapacity(historyListElement, ".queue-option-item:not(.queue-option-item--placeholder)", DEFAULT_HISTORY_PAGE_SIZE, (next) =>
           setHistoryPageSize((current) => (current === next ? current : next))
         );
       }
@@ -804,8 +820,6 @@ export function RoomView({
     if (historyListElement) observer.observe(historyListElement);
     if (queuePaginationElement) observer.observe(queuePaginationElement);
     if (historyPaginationElement) observer.observe(historyPaginationElement);
-    const footer = document.querySelector<HTMLElement>(".app-footer");
-    if (footer) observer.observe(footer);
     window.addEventListener("resize", updateQueueCapacity);
     window.addEventListener("resize", updateHistoryCapacity);
 
@@ -815,6 +829,18 @@ export function RoomView({
       window.removeEventListener("resize", updateHistoryCapacity);
     };
   }, [historyOpen, pagedHistory.length, pagedQueue.length, queueFilter, queueSort, queuePageCount, historyPageCount]);
+
+  useEffect(() => {
+    if (queuePage >= queuePageCount) {
+      setQueuePage(Math.max(0, queuePageCount - 1));
+    }
+  }, [queuePage, queuePageCount]);
+
+  useEffect(() => {
+    if (historyPage >= historyPageCount) {
+      setHistoryPage(Math.max(0, historyPageCount - 1));
+    }
+  }, [historyPage, historyPageCount]);
 
   useEffect(() => {
     setAnimatedParticipants((current) => {
@@ -972,8 +998,9 @@ export function RoomView({
     setJiraMessage("");
     setJiraMessageTone("info");
     try {
-      const boards = await onFetchJiraBoards();
+      const [boards, statuses] = await Promise.all([onFetchJiraBoards(), onFetchJiraStatuses()]);
       setJiraBoards(boards);
+      setJiraStatuses(statuses);
       const nextBoardId = jiraBoardId || boards[0]?.id || "";
       setJiraBoardId(nextBoardId);
       if (nextBoardId) {
@@ -1133,6 +1160,7 @@ export function RoomView({
 
   function openRenameRoom() {
     setRoomRenameName(snapshot.room.name);
+    setRoomRenameCategoryId(snapshot.room.categoryId || "");
     setRoomRenameOpen(true);
   }
 
@@ -1144,9 +1172,10 @@ export function RoomView({
   async function confirmRenameRoom(event: React.FormEvent) {
     event.preventDefault();
     if (!roomRenameName.trim()) return;
+    if (roomCategoriesEnabled && roomCategoryRequired && !roomRenameCategoryId) return;
     setRoomRenameBusy(true);
     try {
-      await onRenameRoom(roomRenameName.trim());
+      await onRenameRoom(roomRenameName.trim(), roomCategoriesEnabled ? (roomRenameCategoryId || null) : undefined);
       setRoomRenameOpen(false);
     } finally {
       setRoomRenameBusy(false);
@@ -1156,6 +1185,11 @@ export function RoomView({
   async function confirmClosePoker() {
     setClosePokerConfirmOpen(false);
     await onClose();
+  }
+
+  async function confirmCancelIssue() {
+    setCancelIssueConfirmOpen(false);
+    await onCancelIssue();
   }
 
   function openJiraAssigneePicker() {
@@ -1295,9 +1329,9 @@ export function RoomView({
             <div className="issue-banner">
               <div className="issue-banner__content">
                 <span className="issue-banner__label">{isHistoryPreview ? "History issue" : "Current issue"}</span>
-                <strong title={displayIssue.title}>{displayIssue.title}</strong>
+                <strong title={displayIssue.title}>{snapshot.room.status === "closed" && !isHistoryPreview ? "—" : displayIssue.title}</strong>
               </div>
-              {displayIssue.externalSource === "jira" && displayIssue.externalIssueUrl ? (
+              {(snapshot.room.status !== "closed" || isHistoryPreview) && displayIssue.externalSource === "jira" && displayIssue.externalIssueUrl ? (
                 <button
                   type="button"
                   aria-label={displayIssue.externalIssueKey ? `Open ${displayIssue.externalIssueKey} in Jira` : "Open external issue in Jira"}
@@ -1347,8 +1381,8 @@ export function RoomView({
               <div className="issue-strip-mobile__row">
                 <span>{isHistoryPreview ? "History issue" : "Current issue"}:</span>
                 <div className="issue-strip-mobile__title-row">
-                  <strong title={displayIssue.title}>{displayIssue.title}</strong>
-                  {displayIssue.externalSource === "jira" && displayIssue.externalIssueUrl ? (
+                  <strong title={displayIssue.title}>{snapshot.room.status === "closed" && !isHistoryPreview ? "—" : displayIssue.title}</strong>
+                  {(snapshot.room.status !== "closed" || isHistoryPreview) && displayIssue.externalSource === "jira" && displayIssue.externalIssueUrl ? (
                     <button
                       type="button"
                       aria-label={displayIssue.externalIssueKey ? `Open ${displayIssue.externalIssueKey} in Jira` : "Open external issue in Jira"}
@@ -1471,12 +1505,15 @@ export function RoomView({
                       <button disabled={!canReveal} onClick={() => void handleRevealAndOpenJira()} type="button">
                         Reveal cards
                       </button>
+                      <button className="ghost-button ghost-button--strong" disabled={snapshot.room.status !== "voting"} onClick={() => setCancelIssueConfirmOpen(true)} type="button">
+                        Return to queue
+                      </button>
                       <button disabled={!canStartNextIssue} onClick={() => void onStartQueuedIssue(issueQueue[0]?.id ?? "")} type="button">
                         Next issue
                       </button>
                       {canManageCardHighlight ? (
-                        <button className="ghost-button ghost-button--strong" onClick={openHighlightPanel} type="button">
-                          {selectedHighlightLabel}
+                        <button className="ghost-button ghost-button--strong" onClick={openRoomSettingsPanel} ref={roomSettingsButtonRef} type="button">
+                          Room settings
                         </button>
                       ) : null}
                       {canImportJiraIssues && snapshot.room.status !== "closed" ? (
@@ -1553,8 +1590,8 @@ export function RoomView({
                             <span aria-hidden="true" className="queue-toolbar__icon">
                               <SortIcon />
                             </span>
-                            <select aria-label="Sort queue issues" value={queueSort} onChange={(event) => setQueueSort(event.target.value as QueueSortValue)}>
-                              <option value="issue">Issue</option>
+                            <select aria-label="Sort queue issues" value={queueSort} onChange={(event) => void onUpdateQueueSort(event.target.value as QueueSortValue)}>
+                              <option value="issue">Issue key</option>
                               <option value="reporter">Reporter</option>
                               <option value="priority">Priority</option>
                             </select>
@@ -1922,21 +1959,7 @@ export function RoomView({
                             <p className="settings-help settings-help--modal-spaced">Kanban board selected. Sprint is not used for this import.</p>
                           </label>
                         )}
-                        <label className="jira-import-order-field">
-                          <span>Import order</span>
-                          <select
-                            value={jiraFilters.importOrder}
-                            onChange={(event) =>
-                              setJiraFilters((current) => ({
-                                ...current,
-                                importOrder: event.target.value === "priority" ? "priority" : "issue-key",
-                              }))
-                            }
-                          >
-                            <option value="issue-key">Issue key</option>
-                            <option value="priority">Priority</option>
-                          </select>
-                        </label>
+
                       </div>
 
                       <div className="jira-import-section jira-import-section--compact">
@@ -1964,38 +1987,107 @@ export function RoomView({
                               <div className="jira-filter-row">
                                 <select
                                   value={condition.field}
-                                  onChange={(event) =>
+                                  onChange={(event) => {
+                                    const newField = event.target.value as "storyPoints" | "originalEstimate" | "status";
                                     setJiraFilters((current) => {
                                       const conditions = [...current.conditions];
-                                      conditions[index] = { ...conditions[index], field: event.target.value as "storyPoints" | "originalEstimate" };
+                                      if (newField === "status") {
+                                        conditions[index] = { field: newField, operator: "IN", value: [] };
+                                      } else {
+                                        conditions[index] = { field: newField, operator: "IS EMPTY", value: null };
+                                      }
                                       return { ...current, conditions };
-                                    })
-                                  }
+                                    });
+                                  }}
                                 >
                                   <option value="storyPoints">Story Points</option>
                                   <option value="originalEstimate">Original Estimate</option>
+                                  <option value="status">Status</option>
                                 </select>
                                 <select
                                   value={condition.operator}
-                                  onChange={(event) =>
+                                  onChange={(event) => {
+                                    const newOp = event.target.value as JiraFilterOperator;
                                     setJiraFilters((current) => {
                                       const conditions = [...current.conditions];
-                                      conditions[index] = { ...conditions[index], operator: event.target.value as JiraFilterOperator, value: null };
+                                      conditions[index] = { ...conditions[index], operator: newOp, value: condition.field === "status" ? [] : null };
                                       return { ...current, conditions };
-                                    })
-                                  }
+                                    });
+                                  }}
                                 >
-                                  <option value="IS EMPTY">IS EMPTY</option>
-                                  <option value="IS NOT EMPTY">IS NOT EMPTY</option>
-                                  <option value="=">=</option>
-                                  <option value="!=">!=</option>
+                                  {condition.field === "status" ? (
+                                    <>
+                                      <option value="IN">IN</option>
+                                      <option value="NOT IN">NOT IN</option>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <option value="IS EMPTY">IS EMPTY</option>
+                                      <option value="IS NOT EMPTY">IS NOT EMPTY</option>
+                                      <option value="=">=</option>
+                                      <option value="!=">!=</option>
+                                    </>
+                                  )}
                                 </select>
+                                {condition.field === "status" && (() => {
+                                  const isOpen = jiraStatusPickerIndex === index;
+                                  const selectedValues = Array.isArray(condition.value) ? condition.value as string[] : [];
+                                  const label = selectedValues.length === 0
+                                    ? "— pick statuses —"
+                                    : selectedValues.length === 1
+                                      ? selectedValues[0]
+                                      : `${selectedValues.length} statuses`;
+                                  return (
+                                    <div
+                                      className="jira-filter-status-picker"
+                                      ref={isOpen ? jiraStatusPickerRef : null}
+                                    >
+                                      <button
+                                        className={`jira-filter-status-trigger${isOpen ? " is-open" : ""}`}
+                                        type="button"
+                                        onClick={() => setJiraStatusPickerIndex(isOpen ? -1 : index)}
+                                      >
+                                        <span className="jira-filter-status-trigger__label">{label}</span>
+                                        <span className="jira-filter-status-trigger__caret" aria-hidden="true">{isOpen ? "▴" : "▾"}</span>
+                                      </button>
+                                      {isOpen && (
+                                        <div className="jira-filter-status-dropdown">
+                                          {jiraStatuses.length === 0 && (
+                                            <span className="jira-filter-status-empty">No statuses loaded</span>
+                                          )}
+                                          {jiraStatuses.map((s) => {
+                                            const checked = selectedValues.includes(s.name);
+                                            return (
+                                              <button
+                                                key={s.id}
+                                                className={`jira-filter-status-option${checked ? " is-selected" : ""}`}
+                                                type="button"
+                                                onClick={() => {
+                                                  setJiraFilters((current) => {
+                                                    const conditions = [...current.conditions];
+                                                    const cur = Array.isArray(conditions[index].value) ? conditions[index].value as string[] : [];
+                                                    const next = checked ? cur.filter((v) => v !== s.name) : [...cur, s.name];
+                                                    conditions[index] = { ...conditions[index], value: next };
+                                                    return { ...current, conditions };
+                                                  });
+                                                }}
+                                              >
+                                                <span className="jira-filter-status-option__check" aria-hidden="true">{checked ? "✓" : ""}</span>
+                                                {s.name}
+                                              </button>
+                                            );
+                                          })}
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })()}
                                 {(condition.operator === "=" || condition.operator === "!=") && (
                                   <input
                                     className="jira-filter-value-input"
                                     type="number"
                                     min="0"
-                                    value={condition.value ?? ""}
+                                    value={typeof condition.value === "number" ? condition.value : ""}
                                     onChange={(event) =>
                                       setJiraFilters((current) => {
                                         const conditions = [...current.conditions];
@@ -2073,33 +2165,45 @@ export function RoomView({
                       </div>
                     </div>
                   </div>
-                ) : highlightMenuOpen ? (
-                  <div className="queue-jira-panel">
+                ) : roomSettingsOpen ? (
+                  <div className="queue-jira-panel" ref={roomSettingsRef}>
                     <div className="queue-jira-panel__header">
                       <div>
-                        <h3>Highlight cards</h3>
-                        <p>Choose how Sprinto should highlight revealed cards.</p>
+                        <h3>Room settings</h3>
                       </div>
                     </div>
-                    <div className="queue-option-list" ref={historyListRef}>
-                      {HIGHLIGHT_OPTIONS.map((option) => (
-                        <button
-                          className={`queue-option-item ${highlightMode === option.value ? "is-selected" : ""}`}
-                          key={option.value}
-                          onClick={() => {
-                            void onUpdateHighlightMode(option.value);
-                            setHighlightMenuOpen(false);
-                          }}
-                          type="button"
-                        >
-                          <span>{option.label}</span>
-                          <strong aria-hidden="true">{highlightMode === option.value ? "✓" : ""}</strong>
-                        </button>
-                      ))}
+                    <div className="room-settings-panel">
+                      {canManageCardHighlight ? (
+                        <div className="room-settings-panel__row">
+                          <label className="room-settings-panel__row-label" htmlFor="room-settings-highlight">Card highlight</label>
+                          <select
+                            id="room-settings-highlight"
+                            value={highlightMode}
+                            onChange={(e) => void onUpdateHighlightMode(e.target.value as HighlightMode)}
+                          >
+                            {HIGHLIGHT_OPTIONS.map((option) => (
+                              <option key={option.value} value={option.value}>{option.label}</option>
+                            ))}
+                          </select>
+                        </div>
+                      ) : null}
+                      {canManageRound ? (
+                        <div className="room-settings-panel__row">
+                          <label className="room-settings-panel__row-label" htmlFor="room-settings-auto-open-jira">Open Jira issue on start</label>
+                          <select
+                            id="room-settings-auto-open-jira"
+                            value={autoOpenJiraUrl ? "yes" : "no"}
+                            onChange={(e) => void onUpdateAutoOpenJiraUrl(e.target.value === "yes")}
+                          >
+                            <option value="yes">Yes — open in new tab</option>
+                            <option value="no">No — do not open</option>
+                          </select>
+                        </div>
+                      ) : null}
                     </div>
                     <div className="queue-jira-panel__actions">
-                      <button className="button-center" onClick={() => setHighlightMenuOpen(false)} type="button">
-                        Cancel
+                      <button className="button-center" onClick={() => setRoomSettingsOpen(false)} type="button">
+                        Close
                       </button>
                     </div>
                   </div>
@@ -2233,26 +2337,21 @@ export function RoomView({
                               >
                                 <div className="queue-item__line" title={formatQueuePrimaryLine(issue)}>
                                   <strong>{formatQueuePrimaryLine(issue)}</strong>
-                                  <div className="queue-item__meta">
-                                    <span>{formatQueueListState(issue.listState)}</span>
-                                    {issue.source === "jira" ? <span>{formatQueuePriorityValue(issue)}</span> : null}
-                                    {issue.source === "jira" ? <span>{formatQueueReporterValue(issue)}</span> : null}
-                                  </div>
                                 </div>
                               </button>
                             ) : (
                               <div className="queue-item__select queue-item__select--static">
                                 <div className="queue-item__line" title={formatQueuePrimaryLine(issue)}>
                                   <strong>{formatQueuePrimaryLine(issue)}</strong>
-                                  <div className="queue-item__meta">
-                                    <span>{formatQueueListState(issue.listState)}</span>
-                                    {issue.source === "jira" ? <span>{formatQueuePriorityValue(issue)}</span> : null}
-                                    {issue.source === "jira" ? <span>{formatQueueReporterValue(issue)}</span> : null}
-                                  </div>
                                 </div>
                               </div>
                             )}
                             <div className="queue-item__actions">
+                              <div className="queue-item__meta">
+                                {issue.source === "jira" ? <span>{formatQueueReporterValue(issue)}</span> : null}
+                                {issue.source === "jira" ? <span className="queue-item__meta-priority">{formatQueuePriorityValue(issue)}</span> : null}
+                                <span>{formatQueueListState(issue.listState)}</span>
+                              </div>
                               <span className="queue-item__source-tag">{formatQueueSource(issue.source)}</span>
                               {issue.externalIssueUrl ? (
                                 <a
@@ -2264,7 +2363,9 @@ export function RoomView({
                                 >
                                   <LinkIcon />
                                 </a>
-                              ) : null}
+                              ) : (
+                                <span aria-hidden="true" className="queue-item__icon queue-item__icon--ghost" />
+                              )}
                               {isWaitingIssue ? (
                                 <button
                                   aria-label="Edit queue item"
@@ -2619,6 +2720,25 @@ export function RoomView({
         </div>
       ) : null}
 
+      {cancelIssueConfirmOpen ? (
+        <div className="modal-overlay modal-overlay--confirm" onClick={() => setCancelIssueConfirmOpen(false)} role="presentation">
+          <div className="card admin-modal admin-modal--confirm" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true">
+            <h2>Return issue to queue</h2>
+            <p>
+              This will cancel the current voting session and return the issue to the top of the queue. Any votes cast will be discarded.
+            </p>
+            <div className="admin-modal-actions">
+              <button className="button-center" onClick={() => setCancelIssueConfirmOpen(false)} type="button">
+                Keep voting
+              </button>
+              <button className="button-center" onClick={() => void confirmCancelIssue()} type="button">
+                Return to queue
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {roomRenameOpen ? (
         <div className="modal-overlay modal-overlay--confirm" onClick={closeRenameRoom} role="presentation">
           <form
@@ -2630,6 +2750,7 @@ export function RoomView({
           >
             <h2>Rename Room</h2>
             <label>
+              Room name
               <input
                 autoFocus
                 value={roomRenameName}
@@ -2637,11 +2758,31 @@ export function RoomView({
                 disabled={roomRenameBusy}
               />
             </label>
+            {roomCategoriesEnabled ? (
+              <label>
+                <span>Category{roomCategoryRequired ? <span className="settings-field-required"> (required)</span> : null}</span>
+                <select
+                  value={roomRenameCategoryId}
+                  onChange={(e) => setRoomRenameCategoryId(e.target.value)}
+                  disabled={roomRenameBusy}
+                  required={roomCategoryRequired}
+                >
+                  <option value="">— unspecified —</option>
+                  {roomCategories.map((cat) => (
+                    <option key={cat.id} value={cat.id}>{cat.name}</option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
             <div className="admin-modal-actions">
               <button className="button-center" disabled={roomRenameBusy} onClick={closeRenameRoom} type="button">
                 Cancel
               </button>
-              <button className="button-center" disabled={roomRenameBusy || !roomRenameName.trim()} type="submit">
+              <button
+                className="button-center"
+                disabled={roomRenameBusy || !roomRenameName.trim() || (roomCategoriesEnabled && roomCategoryRequired && !roomRenameCategoryId)}
+                type="submit"
+              >
                 {roomRenameBusy ? "Saving..." : "Save"}
               </button>
             </div>
@@ -3155,7 +3296,7 @@ function formatQueueSource(source: string) {
   if (source === "jira") {
     return "JIRA";
   }
-  return "Manual";
+  return "Man";
 }
 
 function formatQueueListState(state: QueueDisplayItem["listState"]) {

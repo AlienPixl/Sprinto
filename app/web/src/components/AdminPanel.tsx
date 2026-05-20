@@ -1,5 +1,5 @@
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { ActiveDirectoryTestResult, AdminOverview, AuditLog, Deck, JiraIntegrationSettings, Role, RoomCategory, ScheduledTaskSchedule, SettingsOverview, User } from "../lib/types";
+import { ActiveDirectoryTestResult, AdminOverview, AuditLog, Deck, JiraFilterConnector, JiraFilterOperator, JiraImportFilters, JiraIntegrationSettings, JiraStatus, Role, RoomCategory, ScheduledTaskSchedule, SettingsOverview, User } from "../lib/types";
 import { validatePassword, validatePasswordMatch, type PasswordValidationResult } from "../lib/passwordValidator";
 
 type DeckFormState = { name: string; values: string };
@@ -104,6 +104,7 @@ type AdminPanelProps = {
   onCreateRoomCategory: (name: string) => Promise<void>;
   onUpdateRoomCategory: (categoryId: string, name: string) => Promise<void>;
   onDeleteRoomCategory: (categoryId: string) => Promise<void>;
+  onFetchJiraStatuses: () => Promise<JiraStatus[]>;
 };
 
 function parseDeckValues(raw: string): string[] {
@@ -560,6 +561,7 @@ export function AdminPanel({
   onCreateRoomCategory,
   onUpdateRoomCategory,
   onDeleteRoomCategory,
+  onFetchJiraStatuses,
 }: AdminPanelProps) {
   const [settings, setSettings] = useState<SettingsOverview | null>(null);
   const [roleDrafts, setRoleDrafts] = useState<Record<string, string[]>>({});
@@ -642,7 +644,12 @@ export function AdminPanel({
   const [entraSettingsOpen, setEntraSettingsOpen] = useState(false);
   const [entraMigrationSettingsOpen, setEntraMigrationSettingsOpen] = useState(false);
   const [jiraSettingsOpen, setJiraSettingsOpen] = useState(false);
+  const [jiraAdminStatuses, setJiraAdminStatuses] = useState<JiraStatus[]>([]);
+  const [jiraAdminStatusPickerIndex, setJiraAdminStatusPickerIndex] = useState(-1);
+  const jiraAdminStatusPickerRef = useRef<HTMLDivElement | null>(null);
   const [roomCategoriesOpen, setRoomCategoriesOpen] = useState(false);
+  const [roomGeneralOpen, setRoomGeneralOpen] = useState(false);
+  const [issueListOpen, setIssueListOpen] = useState(false);
   const [roomCategoryEditing, setRoomCategoryEditing] = useState<{ id: string; name: string } | null>(null);
   const [roomCategoryDraft, setRoomCategoryDraft] = useState("");
   const [roomCategoryBusy, setRoomCategoryBusy] = useState(false);
@@ -815,11 +822,19 @@ export function AdminPanel({
       if (!auditFilterMenuRef.current?.contains(event.target as Node)) {
         setOpenAuditFilter(null);
       }
+      if (!jiraAdminStatusPickerRef.current?.contains(event.target as Node)) {
+        setJiraAdminStatusPickerIndex(-1);
+      }
     }
 
     window.addEventListener("mousedown", handleClickOutside);
     return () => window.removeEventListener("mousedown", handleClickOutside);
   }, []);
+
+  useEffect(() => {
+    if (!jiraSettingsOpen) return;
+    onFetchJiraStatuses().then(setJiraAdminStatuses).catch(() => {});
+  }, [jiraSettingsOpen]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!overview) {
     return (
@@ -2579,6 +2594,160 @@ export function AdminPanel({
                         }
                       />
                     </label>
+                    <div className="jira-settings-default-filters">
+                      <p className="jira-settings-default-filters__title">Default import rules</p>
+                      <p className="jira-settings-default-filters__hint">Applied when a room import panel is first opened. Users can change them per session.</p>
+                      <div className="jira-filter-conditions">
+                        {settings.integrations.jira.defaultImportFilters.conditions.map((condition, index) => (
+                          <div key={index}>
+                            {index > 0 && (
+                              <div className="jira-filter-connector">
+                                <select
+                                  value={settings.integrations.jira.defaultImportFilters.connectors[index - 1] ?? "AND"}
+                                  onChange={(event) => {
+                                    const connectors = [...settings.integrations.jira.defaultImportFilters.connectors] as JiraFilterConnector[];
+                                    connectors[index - 1] = event.target.value as JiraFilterConnector;
+                                    setSettings({ ...settings, integrations: { ...settings.integrations, jira: { ...settings.integrations.jira, defaultImportFilters: { ...settings.integrations.jira.defaultImportFilters, connectors } } } });
+                                  }}
+                                >
+                                  <option value="AND">AND</option>
+                                  <option value="OR">OR</option>
+                                </select>
+                              </div>
+                            )}
+                            <div className="jira-filter-row">
+                              <select
+                                value={condition.field}
+                                onChange={(event) => {
+                                  const newField = event.target.value as "storyPoints" | "originalEstimate" | "status";
+                                  const conditions = [...settings.integrations.jira.defaultImportFilters.conditions];
+                                  conditions[index] = newField === "status"
+                                    ? { field: newField, operator: "IN", value: [] }
+                                    : { field: newField, operator: "IS EMPTY", value: null };
+                                  setSettings({ ...settings, integrations: { ...settings.integrations, jira: { ...settings.integrations.jira, defaultImportFilters: { ...settings.integrations.jira.defaultImportFilters, conditions } } } });
+                                }}
+                              >
+                                <option value="storyPoints">Story Points</option>
+                                <option value="originalEstimate">Original Estimate</option>
+                                <option value="status">Status</option>
+                              </select>
+                              <select
+                                value={condition.operator}
+                                onChange={(event) => {
+                                  const newOp = event.target.value as JiraFilterOperator;
+                                  const conditions = [...settings.integrations.jira.defaultImportFilters.conditions];
+                                  conditions[index] = { ...conditions[index], operator: newOp, value: condition.field === "status" ? [] : null };
+                                  setSettings({ ...settings, integrations: { ...settings.integrations, jira: { ...settings.integrations.jira, defaultImportFilters: { ...settings.integrations.jira.defaultImportFilters, conditions } } } });
+                                }}
+                              >
+                                {condition.field === "status" ? (
+                                  <>
+                                    <option value="IN">IN</option>
+                                    <option value="NOT IN">NOT IN</option>
+                                  </>
+                                ) : (
+                                  <>
+                                    <option value="IS EMPTY">IS EMPTY</option>
+                                    <option value="IS NOT EMPTY">IS NOT EMPTY</option>
+                                    <option value="=">=</option>
+                                    <option value="!=">!=</option>
+                                  </>
+                                )}
+                              </select>
+                              {condition.field === "status" && (() => {
+                                const isOpen = jiraAdminStatusPickerIndex === index;
+                                const selectedValues = Array.isArray(condition.value) ? condition.value as string[] : [];
+                                const label = selectedValues.length === 0
+                                  ? "— pick statuses —"
+                                  : selectedValues.length === 1
+                                    ? selectedValues[0]
+                                    : `${selectedValues.length} statuses`;
+                                return (
+                                  <div
+                                    className="jira-filter-status-picker"
+                                    ref={isOpen ? jiraAdminStatusPickerRef : null}
+                                  >
+                                    <button
+                                      className={`jira-filter-status-trigger${isOpen ? " is-open" : ""}`}
+                                      type="button"
+                                      onClick={() => setJiraAdminStatusPickerIndex(isOpen ? -1 : index)}
+                                    >
+                                      <span className="jira-filter-status-trigger__label">{label}</span>
+                                      <span className="jira-filter-status-trigger__caret" aria-hidden="true">{isOpen ? "▴" : "▾"}</span>
+                                    </button>
+                                    {isOpen && (
+                                      <div className="jira-filter-status-dropdown">
+                                        {jiraAdminStatuses.length === 0 && (
+                                          <span className="jira-filter-status-empty">No statuses loaded</span>
+                                        )}
+                                        {jiraAdminStatuses.map((s) => {
+                                          const checked = selectedValues.includes(s.name);
+                                          return (
+                                            <button
+                                              key={s.id}
+                                              className={`jira-filter-status-option${checked ? " is-selected" : ""}`}
+                                              type="button"
+                                              onClick={() => {
+                                                const conditions = [...settings.integrations.jira.defaultImportFilters.conditions];
+                                                const cur = Array.isArray(conditions[index].value) ? conditions[index].value as string[] : [];
+                                                const next = checked ? cur.filter((v) => v !== s.name) : [...cur, s.name];
+                                                conditions[index] = { ...conditions[index], value: next };
+                                                setSettings({ ...settings, integrations: { ...settings.integrations, jira: { ...settings.integrations.jira, defaultImportFilters: { ...settings.integrations.jira.defaultImportFilters, conditions } } } });
+                                              }}
+                                            >
+                                              <span className="jira-filter-status-option__check" aria-hidden="true">{checked ? "✓" : ""}</span>
+                                              {s.name}
+                                            </button>
+                                          );
+                                        })}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })()}
+                              {(condition.operator === "=" || condition.operator === "!=") && (
+                                <input
+                                  className="jira-filter-value-input"
+                                  type="number"
+                                  min="0"
+                                  value={typeof condition.value === "number" ? condition.value : ""}
+                                  onChange={(event) => {
+                                    const conditions = [...settings.integrations.jira.defaultImportFilters.conditions];
+                                    const val = event.target.value === "" ? null : Number(event.target.value);
+                                    conditions[index] = { ...conditions[index], value: val };
+                                    setSettings({ ...settings, integrations: { ...settings.integrations, jira: { ...settings.integrations.jira, defaultImportFilters: { ...settings.integrations.jira.defaultImportFilters, conditions } } } });
+                                  }}
+                                />
+                              )}
+                              {settings.integrations.jira.defaultImportFilters.conditions.length > 1 && (
+                                <button
+                                  className="jira-filter-remove"
+                                  type="button"
+                                  onClick={() => {
+                                    const conditions = settings.integrations.jira.defaultImportFilters.conditions.filter((_, i) => i !== index);
+                                    const connectorIndexToRemove = index === 0 ? 0 : index - 1;
+                                    const connectors = settings.integrations.jira.defaultImportFilters.connectors.filter((_, i) => i !== connectorIndexToRemove);
+                                    setSettings({ ...settings, integrations: { ...settings.integrations, jira: { ...settings.integrations.jira, defaultImportFilters: { conditions, connectors } } } });
+                                  }}
+                                >
+                                  ×
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                        <button
+                          className="jira-filter-add"
+                          type="button"
+                          onClick={() => {
+                            const filters = settings.integrations.jira.defaultImportFilters;
+                            setSettings({ ...settings, integrations: { ...settings.integrations, jira: { ...settings.integrations.jira, defaultImportFilters: { conditions: [...filters.conditions, { field: "storyPoints", operator: "IS EMPTY", value: null }], connectors: [...filters.connectors, "AND"] } } } });
+                          }}
+                        >
+                          + Add condition
+                        </button>
+                      </div>
+                    </div>
                     </div>
                   ) : null}
                 </div>
@@ -2670,43 +2839,94 @@ export function AdminPanel({
             {settings ? (
               <form className="settings-list" onSubmit={(event) => void handleRoomSettingsSubmit(event)}>
                 <div className="settings-category">
-                  <div className="settings-category__content">
-                    <label>
-                      <span>Default timer (seconds)</span>
-                      <input
-                        disabled
-                        min={1}
-                        type="number"
-                        value={settings.defaultTimerSeconds}
-                      />
-                    </label>
-                    <p className="settings-help settings-help--muted">
-                      Reserved for a future timed voting mode.
-                    </p>
-                    <label>
-                      <span>Default deck</span>
-                      <select
-                        value={settings.defaultDeck}
-                        onChange={(event) => setSettings({ ...settings, defaultDeck: event.target.value })}
-                      >
-                        {adminOverview.decks.map((deck) => (
-                          <option key={deck.id} value={deck.name}>{deck.name}</option>
-                        ))}
-                      </select>
-                    </label>
-                    <div className="settings-toggle">
-                      <button
-                        className={`toggle-switch ${settings.requireStoryId ? "is-active" : ""}`}
-                        onClick={() => setSettings({ ...settings, requireStoryId: !settings.requireStoryId })}
-                        type="button"
-                        title="Toggle requirement"
-                      >
-                        <span className="toggle-switch__knob" />
-                      </button>
-                      <span>Require story ID</span>
+                  <button
+                    className={`settings-category__toggle ${roomGeneralOpen ? "is-open" : ""}`}
+                    onClick={() => setRoomGeneralOpen((c) => !c)}
+                    type="button"
+                  >
+                    <span>General</span>
+                    <span className="settings-category__chevron">{roomGeneralOpen ? "▾" : "▸"}</span>
+                  </button>
+                  {roomGeneralOpen ? (
+                    <div className="settings-category__content">
+                      <label>
+                        <span>Default timer (seconds)</span>
+                        <input
+                          disabled
+                          min={1}
+                          type="number"
+                          value={settings.defaultTimerSeconds}
+                        />
+                      </label>
+                      <p className="settings-help settings-help--muted">
+                        Reserved for a future timed voting mode.
+                      </p>
+                      <label>
+                        <span>Default deck</span>
+                        <select
+                          value={settings.defaultDeck}
+                          onChange={(event) => setSettings({ ...settings, defaultDeck: event.target.value })}
+                        >
+                          {adminOverview.decks.map((deck) => (
+                            <option key={deck.id} value={deck.name}>{deck.name}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        <span>Default card highlight</span>
+                        <select
+                          value={settings.defaultHighlightMode || "none"}
+                          onChange={(e) => setSettings({ ...settings, defaultHighlightMode: e.target.value as "none" | "most-frequent" | "highest" })}
+                        >
+                          <option value="none">No highlight</option>
+                          <option value="most-frequent">Most frequented card</option>
+                          <option value="highest">Highest value card</option>
+                        </select>
+                      </label>
+                      {canManageRoomSettings ? (
+                        <div className="settings-toggle">
+                          <button
+                            className={`toggle-switch ${settings.requireStoryId ? "is-active" : ""}`}
+                            onClick={() => setSettings({ ...settings, requireStoryId: !settings.requireStoryId })}
+                            type="button"
+                            title="Toggle requirement"
+                          >
+                            <span className="toggle-switch__knob" />
+                          </button>
+                          <span>Require story ID for manual issues</span>
+                        </div>
+                      ) : null}
                     </div>
-                  </div>
+                  ) : null}
                 </div>
+
+                {canManageRoomSettings ? (
+                  <div className="settings-category">
+                    <button
+                      className={`settings-category__toggle ${issueListOpen ? "is-open" : ""}`}
+                      onClick={() => setIssueListOpen((c) => !c)}
+                      type="button"
+                    >
+                      <span>Issue list</span>
+                      <span className="settings-category__chevron">{issueListOpen ? "▾" : "▸"}</span>
+                    </button>
+                    {issueListOpen ? (
+                      <div className="settings-category__content">
+                        <label>
+                          <span>Default issue sort</span>
+                          <select
+                            value={settings.defaultIssueSort || "issue"}
+                            onChange={(e) => setSettings({ ...settings, defaultIssueSort: e.target.value as "issue" | "reporter" | "priority" })}
+                          >
+                            <option value="issue">Issue key</option>
+                            <option value="reporter">Reporter</option>
+                            <option value="priority">Priority</option>
+                          </select>
+                        </label>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
 
                 {canManageRoomSettings ? (
                   <div className="settings-category">
