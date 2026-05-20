@@ -3301,15 +3301,28 @@ wss.on("connection", async (socket, req) => {
   socket.on("message", async (raw) => {
     try {
       const message = JSON.parse(String(raw));
-      if (message.type === "room.watch" && user && message.roomId) await touchPresence(message.roomId, user.id);
+      if (message.type === "room.watch" && user && message.roomId) {
+        socket.roomId = message.roomId;
+        await touchPresence(message.roomId, user.id);
+      }
       if (message.type === "room.leave" && user && message.roomId) {
+        socket.roomId = null;
         await leaveRoom(message.roomId, user.id);
         await publishRoom(message.roomId);
         await publishDashboard();
       }
     } catch {}
   });
-  socket.on("close", () => sockets.delete(socket));
+  socket.on("close", async () => {
+    sockets.delete(socket);
+    if (socket.roomId && user) {
+      try {
+        await leaveRoom(socket.roomId, user.id);
+        await publishRoom(socket.roomId);
+        await publishDashboard();
+      } catch {}
+    }
+  });
 });
 
 await initDatabase();

@@ -2660,7 +2660,7 @@ export function AdminPanel({
                                 const label = selectedValues.length === 0
                                   ? "— pick statuses —"
                                   : selectedValues.length === 1
-                                    ? selectedValues[0]
+                                    ? (jiraAdminStatuses.find((s) => s.id === selectedValues[0])?.name ?? selectedValues[0])
                                     : `${selectedValues.length} statuses`;
                                 return (
                                   <div
@@ -2681,7 +2681,7 @@ export function AdminPanel({
                                           <span className="jira-filter-status-empty">No statuses loaded</span>
                                         )}
                                         {jiraAdminStatuses.map((s) => {
-                                          const checked = selectedValues.includes(s.name);
+                                          const checked = selectedValues.includes(s.id);
                                           return (
                                             <button
                                               key={s.id}
@@ -2690,7 +2690,7 @@ export function AdminPanel({
                                               onClick={() => {
                                                 const conditions = [...settings.integrations.jira.defaultImportFilters.conditions];
                                                 const cur = Array.isArray(conditions[index].value) ? conditions[index].value as string[] : [];
-                                                const next = checked ? cur.filter((v) => v !== s.name) : [...cur, s.name];
+                                                const next = checked ? cur.filter((v) => v !== s.id) : [...cur, s.id];
                                                 conditions[index] = { ...conditions[index], value: next };
                                                 setSettings({ ...settings, integrations: { ...settings.integrations, jira: { ...settings.integrations.jira, defaultImportFilters: { ...settings.integrations.jira.defaultImportFilters, conditions } } } });
                                               }}

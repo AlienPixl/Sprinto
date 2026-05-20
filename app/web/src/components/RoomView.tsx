@@ -2035,7 +2035,7 @@ export function RoomView({
                                   const label = selectedValues.length === 0
                                     ? "— pick statuses —"
                                     : selectedValues.length === 1
-                                      ? selectedValues[0]
+                                      ? (jiraStatuses.find((s) => s.id === selectedValues[0])?.name ?? selectedValues[0])
                                       : `${selectedValues.length} statuses`;
                                   return (
                                     <div
@@ -2056,7 +2056,7 @@ export function RoomView({
                                             <span className="jira-filter-status-empty">No statuses loaded</span>
                                           )}
                                           {jiraStatuses.map((s) => {
-                                            const checked = selectedValues.includes(s.name);
+                                            const checked = selectedValues.includes(s.id);
                                             return (
                                               <button
                                                 key={s.id}
@@ -2066,7 +2066,7 @@ export function RoomView({
                                                   setJiraFilters((current) => {
                                                     const conditions = [...current.conditions];
                                                     const cur = Array.isArray(conditions[index].value) ? conditions[index].value as string[] : [];
-                                                    const next = checked ? cur.filter((v) => v !== s.name) : [...cur, s.name];
+                                                    const next = checked ? cur.filter((v) => v !== s.id) : [...cur, s.id];
                                                     conditions[index] = { ...conditions[index], value: next };
                                                     return { ...current, conditions };
                                                   });

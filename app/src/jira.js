@@ -441,12 +441,11 @@ function buildJiraIssuePath({ boardId, sprintId, storyPointsFieldId, startAt }) 
   return `/rest/agile/1.0/board/${encodeURIComponent(boardId)}/issue?startAt=${startAt}&maxResults=50&fields=${fields}`;
 }
 
-function evaluateFilterCondition(condition, storyPointsValue, originalEstimateSeconds, statusName) {
+function evaluateFilterCondition(condition, storyPointsValue, originalEstimateSeconds, statusId) {
   if (condition.field === "status") {
-    const actual = String(statusName || "").toLowerCase();
     const values = Array.isArray(condition.value) ? condition.value : [];
-    if (condition.operator === "IN") return values.some((v) => String(v).toLowerCase() === actual);
-    if (condition.operator === "NOT IN") return !values.some((v) => String(v).toLowerCase() === actual);
+    if (condition.operator === "IN") return values.some((v) => String(v) === statusId);
+    if (condition.operator === "NOT IN") return !values.some((v) => String(v) === statusId);
     return true;
   }
   const rawValue = condition.field === "storyPoints" ? storyPointsValue : originalEstimateSeconds;
@@ -476,13 +475,13 @@ function parseOriginalEstimateSeconds(timetracking) {
 function matchesIssueImportFilters(issue, storyPointsFieldId, filters) {
   const storyPointsValue = issue?.fields?.[storyPointsFieldId];
   const originalEstimateSeconds = parseOriginalEstimateSeconds(issue?.fields?.timetracking);
-  const statusName = String(issue?.fields?.status?.name || "");
+  const statusId = String(issue?.fields?.status?.id || "");
 
   if (!filters.conditions || filters.conditions.length === 0) return true;
 
-  let result = evaluateFilterCondition(filters.conditions[0], storyPointsValue, originalEstimateSeconds, statusName);
+  let result = evaluateFilterCondition(filters.conditions[0], storyPointsValue, originalEstimateSeconds, statusId);
   for (let i = 1; i < filters.conditions.length; i++) {
-    const condResult = evaluateFilterCondition(filters.conditions[i], storyPointsValue, originalEstimateSeconds, statusName);
+    const condResult = evaluateFilterCondition(filters.conditions[i], storyPointsValue, originalEstimateSeconds, statusId);
     const connector = filters.connectors?.[i - 1] ?? "AND";
     result = connector === "OR" ? result || condResult : result && condResult;
   }

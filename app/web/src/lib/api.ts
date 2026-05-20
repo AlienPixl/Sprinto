@@ -763,6 +763,10 @@ export function connectRoom(roomId: string, onEvent: (event: RoomEvent) => void)
   const token = getToken();
   const socket = new WebSocket(`${protocol}//${host}/api/rooms/${roomId}/ws?token=${token ?? ""}`);
 
+  socket.onopen = () => {
+    socket.send(JSON.stringify({ type: "room.watch", roomId }));
+  };
+
   socket.onmessage = (message) => {
     onEvent(JSON.parse(message.data) as RoomEvent);
   };
