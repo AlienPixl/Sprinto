@@ -1807,7 +1807,8 @@ app.post("/api/rooms", requireUser, async (req, res) => {
   const categoryId = String(req.body?.categoryId || "").trim() || null;
   const roomSettings = await getSettings();
   const highlightMode = roomSettings.defaultHighlightMode || "none";
-  const roomId = await createRoom({ userId: req.user.id, name, deckId: selectedDeck?.id, categoryId, highlightMode });
+  const queueSort = roomSettings.defaultIssueSort || "issue";
+  const roomId = await createRoom({ userId: req.user.id, name, deckId: selectedDeck?.id, categoryId, highlightMode, queueSort });
   await logAudit(req.user.id, "room.create", "room", { roomId, name, categoryId });
   await publishDashboard();
   await publishRoom(roomId);
@@ -3324,6 +3325,8 @@ wss.on("connection", async (socket, req) => {
     }
   });
 });
+
+export { app };
 
 await initDatabase();
 try {

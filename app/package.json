@@ -1,16 +1,16 @@
 {
   "name": "sprinto-app",
   "author": "Martin Janecek",
-  "version": "1.6.1",
+  "version": "1.6.2",
   "license": "SEE LICENSE IN LICENSE",
   "private": true,
   "type": "module",
   "scripts": {
     "build": "vite build",
-    "test": "vitest",
-    "test:run": "vitest run",
-    "test:coverage": "vitest run --coverage",
-    "test:watch": "vitest --watch",
+    "test": "NODE_OPTIONS='--max-old-space-size=4096' vitest",
+    "test:run": "NODE_OPTIONS='--max-old-space-size=4096' vitest run",
+    "test:coverage": "NODE_OPTIONS='--max-old-space-size=4096' vitest run --coverage",
+    "test:watch": "NODE_OPTIONS='--max-old-space-size=4096' vitest --watch",
     "start": "node src/server.js",
     "dev": "node --watch src/server.js"
   },

@@ -1436,14 +1436,16 @@ export async function getDashboard() {
   }));
 }
 
-export async function createRoom({ userId, name, deckId, categoryId = null, highlightMode = "none" }) {
+export async function createRoom({ userId, name, deckId, categoryId = null, highlightMode = "none", queueSort = "issue" }) {
   return tx(async (client) => {
     const roomId = newId();
     const resolvedCategoryId = categoryId || null;
     const resolvedHighlightMode = normalizeRoomHighlightMode(highlightMode);
+    const validSorts = new Set(["issue", "reporter", "priority"]);
+    const resolvedQueueSort = validSorts.has(queueSort) ? queueSort : "issue";
     await client.query(
-      "insert into rooms (id, name, status, deck_id, created_by, status_changed_at, category_id, highlight_mode) values ($1, $2, 'open', $3, $4, now(), $5, $6)",
-      [roomId, name, deckId, userId, resolvedCategoryId, resolvedHighlightMode]
+      "insert into rooms (id, name, status, deck_id, created_by, status_changed_at, category_id, highlight_mode, queue_sort) values ($1, $2, 'open', $3, $4, now(), $5, $6, $7)",
+      [roomId, name, deckId, userId, resolvedCategoryId, resolvedHighlightMode, resolvedQueueSort]
     );
     await client.query("insert into room_presence (room_id, user_id, joined_at, last_seen) values ($1, $2, now(), now()) on conflict (room_id, user_id) do update set left_at = null, last_seen = now()", [roomId, userId]);
     return roomId;

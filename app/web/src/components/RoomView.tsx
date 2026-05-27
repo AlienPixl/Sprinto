@@ -248,6 +248,7 @@ export function RoomView({
   const roomSettingsRef = useRef<HTMLDivElement | null>(null);
   const roomSettingsButtonRef = useRef<HTMLButtonElement | null>(null);
   const prevIssueIdRef = useRef<string>(snapshot.room.currentIssue.id);
+  const locallyStartedIssueIdRef = useRef<string | null>(null);
   const jiraAssigneePickerRef = useRef<HTMLDivElement | null>(null);
   const jiraAssigneeSearchInputRef = useRef<HTMLInputElement | null>(null);
   const jiraAssigneeOptionsCacheRef = useRef<Record<string, JiraAssignableUser[]>>({});
@@ -318,9 +319,16 @@ export function RoomView({
     setHistoryPlayback(100);
     setQueuePage(0);
     const issue = snapshot.room.currentIssue;
-    if (issue.id !== prevIssueIdRef.current && autoOpenJiraUrl && issue.externalSource === "jira" && issue.externalIssueUrl) {
+    if (
+      issue.id !== prevIssueIdRef.current &&
+      autoOpenJiraUrl &&
+      issue.externalSource === "jira" &&
+      issue.externalIssueUrl &&
+      locallyStartedIssueIdRef.current === issue.id
+    ) {
       window.open(issue.externalIssueUrl, "_blank", "noopener,noreferrer");
     }
+    locallyStartedIssueIdRef.current = null;
     prevIssueIdRef.current = issue.id;
   }, [snapshot.room.currentIssue.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -477,8 +485,12 @@ export function RoomView({
     `Link: ${roomUrl}`,
   ].join("\n");
   const shareMailto = `mailto:?subject=${encodeURIComponent(shareSubject)}&body=${encodeURIComponent(shareBody)}`;
-  const participantSource = (historyFrame?.visibleParticipants ?? snapshot.room.participants).filter(
-    (participant) => participant.canVote
+  const participantSource = useMemo(
+    () => (historyFrame?.visibleParticipants ?? snapshot.room.participants).filter(
+      (participant) => participant.canVote
+    ),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [historyFrame?.visibleParticipants, snapshot.room.participants]
   );
   const highlightMode = snapshot.room.highlightMode;
   const autoOpenJiraUrl = snapshot.room.autoOpenJiraUrl !== false;
@@ -919,6 +931,11 @@ export function RoomView({
     await onQueueIssue(queuedIssueTitle, queuedStoryId.trim());
     setQueuedStoryId("");
     setQueuedIssueTitle("");
+  }
+
+  async function handleStartQueuedIssue(issueId: string) {
+    locallyStartedIssueIdRef.current = issueId;
+    await onStartQueuedIssue(issueId);
   }
 
   function startEditingQueueIssue(issue: IssueQueueItem) {
@@ -1508,7 +1525,7 @@ export function RoomView({
                       <button className="ghost-button ghost-button--strong" disabled={snapshot.room.status !== "voting"} onClick={() => setCancelIssueConfirmOpen(true)} type="button">
                         Return to queue
                       </button>
-                      <button disabled={!canStartNextIssue} onClick={() => void onStartQueuedIssue(issueQueue[0]?.id ?? "")} type="button">
+                      <button disabled={!canStartNextIssue} onClick={() => void handleStartQueuedIssue(issueQueue[0]?.id ?? "")} type="button">
                         Next issue
                       </button>
                       {canManageCardHighlight ? (
@@ -2332,7 +2349,7 @@ export function RoomView({
                               <button
                                 className={`queue-item__select ${!canStartQueuedIssue ? "is-disabled" : ""}`}
                                 disabled={!canStartQueuedIssue}
-                                onClick={() => void onStartQueuedIssue(waitingIssueId)}
+                                onClick={() => void handleStartQueuedIssue(waitingIssueId)}
                                 type="button"
                               >
                                 <div className="queue-item__line" title={formatQueuePrimaryLine(issue)}>

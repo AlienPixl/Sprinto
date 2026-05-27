@@ -7,6 +7,7 @@ export default defineConfig({
     environment: "jsdom",
     globals: true,
     setupFiles: "./vitest.setup.ts",
+    env: { PORT: "0" },
     coverage: {
       reporter: ["text", "lcov"],
     },
