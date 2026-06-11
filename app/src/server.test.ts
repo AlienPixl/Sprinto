@@ -733,3 +733,52 @@ describe("server routes", () => {
     });
   });
 });
+
+// Rate-limit integration tests use a dedicated user ID so they never share
+// the sliding-window bucket with the tests above.
+const rateLimitUser = {
+  id: "rate-limit-test-user",
+  username: "ratelimit",
+  displayName: "Rate Limit",
+  email: "ratelimit@example.com",
+  roles: ["user"],
+  permissions: ["vote", "create_room", "reveal_votes", "close_poker", "queue_issues"],
+  authSource: "local",
+  isActive: true,
+  sessionId: "session-rl",
+  entraMigrationState: null,
+};
+
+describe("rate limiting", () => {
+  beforeEach(() => {
+    vi.mocked(getUserBySession).mockResolvedValue(rateLimitUser as typeof mockAdminUser);
+    vi.mocked(getRoomSnapshot).mockResolvedValue({ room: { currentIssue: { id: "issue-1", votes: {}, stats: { average: null, median: null } }, issueQueue: [], revealed: false, status: "voting", participants: [], completedCount: 0 }, stats: { average: null, median: null } } as any);
+  });
+
+  it("returns 429 on the room mutation endpoint after 20 rapid requests", async () => {
+    const results: number[] = [];
+    for (let i = 0; i < 21; i++) {
+      const res = await request(app)
+        .post("/api/rooms/room-rl/vote")
+        .set("Authorization", "Bearer rl-token")
+        .send({ value: "3" });
+      results.push(res.status);
+    }
+    const successes = results.filter((s) => s !== 429).length;
+    const blocked = results.filter((s) => s === 429).length;
+    expect(successes).toBe(20);
+    expect(blocked).toBe(1);
+  });
+
+  it("returns 429 on the global API endpoint after 120 rapid requests", async () => {
+    const results: number[] = [];
+    for (let i = 0; i < 121; i++) {
+      const res = await request(app)
+        .get("/api/rooms")
+        .set("Authorization", "Bearer rl-token");
+      results.push(res.status);
+    }
+    const blocked = results.filter((s) => s === 429).length;
+    expect(blocked).toBeGreaterThanOrEqual(1);
+  });
+});

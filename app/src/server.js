@@ -7,6 +7,7 @@ import express from "express";
 import { WebSocketServer } from "ws";
 import sharp from "sharp";
 import { authenticateAgainstActiveDirectory, listActiveDirectoryUsers, testActiveDirectoryConnection, validateActiveDirectorySettings } from "./ad.js";
+import { createRateLimiter, createWsRateLimiter, keyByUserId, keyByIp } from "./rate-limit.js";
 import { readBootstrapConfig } from "./bootstrap-config.js";
 import {
   createEntraLoginRequest,
@@ -140,6 +141,13 @@ let updateCheckPromise = null;
 
 app.use(express.json({ limit: "10mb" }));
 
+// Rate limiters
+const globalApiLimiter = createRateLimiter({ limit: 120, windowMs: 60_000, keyFn: keyByUserId, message: "Too many requests. Please slow down." });
+const roomMutationLimiter = createRateLimiter({ limit: 20, windowMs: 10_000, keyFn: keyByUserId, message: "Too many room actions. Please slow down." });
+const jiraLimiter = createRateLimiter({ limit: 5, windowMs: 30_000, keyFn: keyByUserId, message: "Too many Jira requests. Please slow down." });
+const loginLimiter = createRateLimiter({ limit: 10, windowMs: 60_000, keyFn: keyByIp, message: "Too many login attempts. Please wait a moment." });
+const wsMessageLimiter = createWsRateLimiter({ limit: 30, windowMs: 10_000 });
+
 function readSessionToken(req) {
   const cookies = cookie.parse(req.headers.cookie || "");
   const authHeader = req.headers.authorization || "";
@@ -151,6 +159,11 @@ app.use(async (req, _res, next) => {
   req.sessionToken = readSessionToken(req);
   req.user = await getUserBySession(req.sessionToken);
   next();
+});
+
+app.use((req, res, next) => {
+  if (!req.user) return next();
+  return globalApiLimiter(req, res, next);
 });
 
 app.use(express.static(path.join(__dirname, "..", "dist")));
@@ -1589,7 +1602,7 @@ app.get("/api/auth/entra/callback", async (req, res) => {
   }
 });
 
-app.post("/api/auth/login", async (req, res) => {
+app.post("/api/auth/login", loginLimiter, async (req, res) => {
   const identifier = String(req.body?.username || req.body?.identifier || "").trim();
   const password = String(req.body?.password || "");
   const method = String(req.body?.method || "username");
@@ -1730,7 +1743,7 @@ app.get("/api/auth/me", requireUser, async (req, res) => {
   json(res, user);
 });
 
-app.post("/api/auth/change-password", requireUser, async (req, res) => {
+app.post("/api/auth/change-password", requireUser, loginLimiter, async (req, res) => {
   if (isSystemManagedUser(req.user)) {
     return json(res, { error: "The recovery admin password is managed from deployment configuration." }, 403);
   }
@@ -1798,7 +1811,7 @@ app.get("/api/rooms", requireUser, async (_req, res) => {
   json(res, { rooms: await getDashboardCompat() });
 });
 
-app.post("/api/rooms", requireUser, async (req, res) => {
+app.post("/api/rooms", requireUser, roomMutationLimiter, async (req, res) => {
   if (!capabilitiesFor(req.user).canCreateRoom) return json(res, { error: "Forbidden" }, 403);
   const name = String(req.body?.name || "").trim();
   if (!name) return json(res, { error: "Room name is required" }, 400);
@@ -1837,7 +1850,7 @@ app.post("/api/rooms/:roomId/leave", requireUser, async (req, res) => {
   json(res, await getRoomSnapshot(req.params.roomId, req.user.id));
 });
 
-app.post("/api/rooms/:roomId/queue", requireUser, async (req, res) => {
+app.post("/api/rooms/:roomId/queue", requireUser, roomMutationLimiter, async (req, res) => {
   if (!capabilitiesFor(req.user).canManageRoom) return json(res, { error: "Forbidden" }, 403);
   const settings = await getSettings();
   const storyId = String(req.body?.storyId || "").trim();
@@ -1851,7 +1864,7 @@ app.post("/api/rooms/:roomId/queue", requireUser, async (req, res) => {
   json(res, await getRoomSnapshot(req.params.roomId, req.user.id));
 });
 
-app.put("/api/rooms/:roomId/queue/:issueId", requireUser, async (req, res) => {
+app.put("/api/rooms/:roomId/queue/:issueId", requireUser, roomMutationLimiter, async (req, res) => {
   if (!capabilitiesFor(req.user).canManageRoom) return json(res, { error: "Forbidden" }, 403);
   try {
     const settings = await getSettings();
@@ -1869,7 +1882,7 @@ app.put("/api/rooms/:roomId/queue/:issueId", requireUser, async (req, res) => {
   }
 });
 
-app.delete("/api/rooms/:roomId/queue/:issueId", requireUser, async (req, res) => {
+app.delete("/api/rooms/:roomId/queue/:issueId", requireUser, roomMutationLimiter, async (req, res) => {
   if (!capabilitiesFor(req.user).canManageRoom) return json(res, { error: "Forbidden" }, 403);
   try {
     await deleteQueueIssue(req.params.roomId, req.params.issueId);
@@ -1881,7 +1894,7 @@ app.delete("/api/rooms/:roomId/queue/:issueId", requireUser, async (req, res) =>
   }
 });
 
-app.post("/api/rooms/:roomId/start", requireUser, async (req, res) => {
+app.post("/api/rooms/:roomId/start", requireUser, roomMutationLimiter, async (req, res) => {
   if (!capabilitiesFor(req.user).canManageRoom) return json(res, { error: "Forbidden" }, 403);
   try {
     await startQueuedIssue(req.params.roomId, req.body?.issueId);
@@ -1894,7 +1907,7 @@ app.post("/api/rooms/:roomId/start", requireUser, async (req, res) => {
   }
 });
 
-app.post("/api/rooms/:roomId/vote", requireUser, async (req, res) => {
+app.post("/api/rooms/:roomId/vote", requireUser, roomMutationLimiter, async (req, res) => {
   if (!capabilitiesFor(req.user).canVote) return json(res, { error: "Forbidden" }, 403);
   try {
     const current = await getRoomSnapshot(req.params.roomId, req.user.id);
@@ -1907,7 +1920,7 @@ app.post("/api/rooms/:roomId/vote", requireUser, async (req, res) => {
   }
 });
 
-app.post("/api/rooms/:roomId/reveal", requireUser, async (req, res) => {
+app.post("/api/rooms/:roomId/reveal", requireUser, roomMutationLimiter, async (req, res) => {
   if (!capabilitiesFor(req.user).canManageRoom) return json(res, { error: "Forbidden" }, 403);
   try {
     await revealIssue(req.params.roomId, req.user.id);
@@ -1920,7 +1933,7 @@ app.post("/api/rooms/:roomId/reveal", requireUser, async (req, res) => {
   }
 });
 
-app.post("/api/rooms/:roomId/cancel-issue", requireUser, async (req, res) => {
+app.post("/api/rooms/:roomId/cancel-issue", requireUser, roomMutationLimiter, async (req, res) => {
   if (!capabilitiesFor(req.user).canManageRoom) return json(res, { error: "Forbidden" }, 403);
   try {
     await cancelActiveIssue(req.params.roomId);
@@ -1933,7 +1946,7 @@ app.post("/api/rooms/:roomId/cancel-issue", requireUser, async (req, res) => {
   }
 });
 
-app.post("/api/rooms/:roomId/close", requireUser, async (req, res) => {
+app.post("/api/rooms/:roomId/close", requireUser, roomMutationLimiter, async (req, res) => {
   if (!capabilitiesFor(req.user).canManageRoom) return json(res, { error: "Forbidden" }, 403);
   await closeRoom(req.params.roomId);
   await logAudit(req.user.id, "room.close", "room", { roomId: req.params.roomId });
@@ -1942,7 +1955,7 @@ app.post("/api/rooms/:roomId/close", requireUser, async (req, res) => {
   json(res, await getRoomSnapshot(req.params.roomId, req.user.id));
 });
 
-app.post("/api/rooms/:roomId/auto-open-jira-url", requireUser, async (req, res) => {
+app.post("/api/rooms/:roomId/auto-open-jira-url", requireUser, roomMutationLimiter, async (req, res) => {
   if (!capabilitiesFor(req.user).canManageRoom) return json(res, { error: "Forbidden" }, 403);
   try {
     await updateRoomAutoOpenJiraUrl(req.params.roomId, req.body?.autoOpenJiraUrl);
@@ -1953,7 +1966,7 @@ app.post("/api/rooms/:roomId/auto-open-jira-url", requireUser, async (req, res) 
   }
 });
 
-app.post("/api/rooms/:roomId/queue-sort", requireUser, async (req, res) => {
+app.post("/api/rooms/:roomId/queue-sort", requireUser, roomMutationLimiter, async (req, res) => {
   if (!capabilitiesFor(req.user).canManageRoom) return json(res, { error: "Forbidden" }, 403);
   try {
     await updateRoomQueueSort(req.params.roomId, req.body?.queueSort);
@@ -1964,7 +1977,7 @@ app.post("/api/rooms/:roomId/queue-sort", requireUser, async (req, res) => {
   }
 });
 
-app.post("/api/rooms/:roomId/highlight", requireUser, async (req, res) => {
+app.post("/api/rooms/:roomId/highlight", requireUser, roomMutationLimiter, async (req, res) => {
   if (!req.user.permissions?.includes("highlight_cards")) return json(res, { error: "Forbidden" }, 403);
   try {
     const highlightMode = await updateRoomHighlightMode(req.params.roomId, req.body?.highlightMode);
@@ -1976,7 +1989,7 @@ app.post("/api/rooms/:roomId/highlight", requireUser, async (req, res) => {
   }
 });
 
-app.post("/api/rooms/:roomId/rename", requireUser, async (req, res) => {
+app.post("/api/rooms/:roomId/rename", requireUser, roomMutationLimiter, async (req, res) => {
   if (!capabilitiesFor(req.user).canRenameRoom) return json(res, { error: "Forbidden" }, 403);
   try {
     const newName = await renameRoom(req.params.roomId, req.body?.name, req.body?.categoryId);
@@ -1989,7 +2002,7 @@ app.post("/api/rooms/:roomId/rename", requireUser, async (req, res) => {
   }
 });
 
-app.delete("/api/rooms/:roomId", requireUser, async (req, res) => {
+app.delete("/api/rooms/:roomId", requireUser, roomMutationLimiter, async (req, res) => {
   if (!capabilitiesFor(req.user).canDeleteRoom) return json(res, { error: "Forbidden" }, 403);
   await deleteRoom(req.params.roomId);
   await logAudit(req.user.id, "room.delete", "room", { roomId: req.params.roomId });
@@ -2004,11 +2017,11 @@ app.get("/api/rooms/:roomId/history/:issueId", requireUser, async (req, res) => 
   json(res, { issue });
 });
 
-app.post("/api/rooms/:roomId/reset", requireUser, async (req, res) => {
+app.post("/api/rooms/:roomId/reset", requireUser, roomMutationLimiter, async (req, res) => {
   json(res, await getRoomSnapshot(req.params.roomId, req.user.id));
 });
 
-app.get("/api/jira/statuses", requireUser, requireJiraImport, async (_req, res) => {
+app.get("/api/jira/statuses", requireUser, requireJiraImport, jiraLimiter, async (_req, res) => {
   try {
     const settings = await getSettings();
     json(res, { statuses: await getJiraStatuses(settings) });
@@ -2017,7 +2030,7 @@ app.get("/api/jira/statuses", requireUser, requireJiraImport, async (_req, res) 
   }
 });
 
-app.get("/api/jira/boards", requireUser, requireJiraImport, async (_req, res) => {
+app.get("/api/jira/boards", requireUser, requireJiraImport, jiraLimiter, async (_req, res) => {
   try {
     const settings = await getSettings();
     json(res, { boards: await listJiraBoards(settings) });
@@ -2026,7 +2039,7 @@ app.get("/api/jira/boards", requireUser, requireJiraImport, async (_req, res) =>
   }
 });
 
-app.get("/api/jira/boards/:boardId/sprints", requireUser, requireJiraImport, async (req, res) => {
+app.get("/api/jira/boards/:boardId/sprints", requireUser, requireJiraImport, jiraLimiter, async (req, res) => {
   try {
     const settings = await getSettings();
     json(res, { sprints: await listJiraSprints(settings, req.params.boardId) });
@@ -2035,7 +2048,7 @@ app.get("/api/jira/boards/:boardId/sprints", requireUser, requireJiraImport, asy
   }
 });
 
-app.post("/api/jira/boards/:boardId/sprints/:sprintId/issues/preview", requireUser, requireJiraImport, async (req, res) => {
+app.post("/api/jira/boards/:boardId/sprints/:sprintId/issues/preview", requireUser, requireJiraImport, jiraLimiter, async (req, res) => {
   try {
     const settings = await getSettings();
     const issues = await listJiraIssues(settings, {
@@ -2049,7 +2062,7 @@ app.post("/api/jira/boards/:boardId/sprints/:sprintId/issues/preview", requireUs
   }
 });
 
-app.post("/api/jira/boards/:boardId/issues/preview", requireUser, requireJiraImport, async (req, res) => {
+app.post("/api/jira/boards/:boardId/issues/preview", requireUser, requireJiraImport, jiraLimiter, async (req, res) => {
   try {
     const settings = await getSettings();
     const importScope = await resolveJiraImportScope(settings, req.params.boardId, "");
@@ -2064,7 +2077,7 @@ app.post("/api/jira/boards/:boardId/issues/preview", requireUser, requireJiraImp
   }
 });
 
-app.post("/api/rooms/:roomId/jira/import", requireUser, requireJiraImport, async (req, res) => {
+app.post("/api/rooms/:roomId/jira/import", requireUser, requireJiraImport, jiraLimiter, async (req, res) => {
   try {
     const settings = await getSettings();
     const { boardId, sprintId, filters } = req.body || {};
@@ -2171,7 +2184,7 @@ app.post("/api/rooms/:roomId/jira/import", requireUser, requireJiraImport, async
   }
 });
 
-app.get("/api/rooms/:roomId/jira/issues/:issueId/assignees", requireUser, requireJiraEstimateWrite, async (req, res) => {
+app.get("/api/rooms/:roomId/jira/issues/:issueId/assignees", requireUser, requireJiraEstimateWrite, jiraLimiter, async (req, res) => {
   try {
     const settings = await getSettings();
     const jiraSettings = settings.integrations?.jira;
@@ -2193,7 +2206,7 @@ app.get("/api/rooms/:roomId/jira/issues/:issueId/assignees", requireUser, requir
   }
 });
 
-app.post("/api/rooms/:roomId/jira/issues/:issueId/apply-estimate", requireUser, requireJiraEstimateWrite, async (req, res) => {
+app.post("/api/rooms/:roomId/jira/issues/:issueId/apply-estimate", requireUser, requireJiraEstimateWrite, jiraLimiter, async (req, res) => {
   try {
     const snapshot = await getRoomSnapshot(req.params.roomId, req.user.id);
     const matchingIssue = findRoomJiraIssue(snapshot, req.params.issueId);
@@ -2233,7 +2246,7 @@ app.post("/api/rooms/:roomId/jira/issues/:issueId/apply-estimate", requireUser, 
   }
 });
 
-app.post("/api/rooms/:roomId/jira/issues/:issueId/assignee", requireUser, requireJiraEstimateWrite, async (req, res) => {
+app.post("/api/rooms/:roomId/jira/issues/:issueId/assignee", requireUser, requireJiraEstimateWrite, jiraLimiter, async (req, res) => {
   try {
     const snapshot = await getRoomSnapshot(req.params.roomId, req.user.id);
     const matchingIssue = findRoomJiraIssue(snapshot, req.params.issueId);
@@ -2273,7 +2286,7 @@ app.post("/api/rooms/:roomId/jira/issues/:issueId/assignee", requireUser, requir
   }
 });
 
-app.post("/api/rooms/:roomId/jira/issues/:issueId/report", requireUser, requireJiraReportPosting, async (req, res) => {
+app.post("/api/rooms/:roomId/jira/issues/:issueId/report", requireUser, requireJiraReportPosting, jiraLimiter, async (req, res) => {
   try {
     const snapshot = await getRoomSnapshot(req.params.roomId, req.user.id);
     const roomIssue = [snapshot?.room.currentIssue, ...(snapshot?.room.issueHistory || [])]
@@ -2511,7 +2524,7 @@ function normalizeReportTimeline(events, startedAt, revealedAt) {
     });
 }
 
-app.post("/api/jira/worklog/report", requireUser, requireWorklogView, async (req, res) => {
+app.post("/api/jira/worklog/report", requireUser, requireWorklogView, jiraLimiter, async (req, res) => {
   try {
     const filters = req.body || {};
     if (!filters.dateFrom || !filters.dateTo) {
@@ -2547,7 +2560,7 @@ app.post("/api/jira/worklog/report", requireUser, requireWorklogView, async (req
   }
 });
 
-app.get("/api/jira/worklog/users", requireUser, requireWorklogView, async (req, res) => {
+app.get("/api/jira/worklog/users", requireUser, requireWorklogView, jiraLimiter, async (req, res) => {
   try {
     const users = await listJiraWorklogUsers(await getSettings(), String(req.query?.query || ""));
     json(res, { users });
@@ -2556,7 +2569,7 @@ app.get("/api/jira/worklog/users", requireUser, requireWorklogView, async (req, 
   }
 });
 
-app.get("/api/jira/worklog/link-types", requireUser, requireWorklogView, async (req, res) => {
+app.get("/api/jira/worklog/link-types", requireUser, requireWorklogView, jiraLimiter, async (req, res) => {
   try {
     const linkTypes = await listJiraIssueLinkTypes(await getSettings());
     json(res, { linkTypes });
@@ -2565,7 +2578,7 @@ app.get("/api/jira/worklog/link-types", requireUser, requireWorklogView, async (
   }
 });
 
-app.get("/api/jira/worklog/issues", requireUser, requireWorklogView, async (req, res) => {
+app.get("/api/jira/worklog/issues", requireUser, requireWorklogView, jiraLimiter, async (req, res) => {
   try {
     const issues = await searchJiraWorklogIssues(await getSettings(), String(req.query?.query || ""));
     json(res, { issues });
@@ -2574,7 +2587,7 @@ app.get("/api/jira/worklog/issues", requireUser, requireWorklogView, async (req,
   }
 });
 
-app.get("/api/jira/worklog/issues/:issueKey", requireUser, requireWorklogView, async (req, res) => {
+app.get("/api/jira/worklog/issues/:issueKey", requireUser, requireWorklogView, jiraLimiter, async (req, res) => {
   try {
     const issue = await getJiraWorklogIssue(await getSettings(), String(req.params.issueKey || ""));
     if (!issue) {
@@ -3300,6 +3313,7 @@ wss.on("connection", async (socket, req) => {
   socket.user = user;
   sockets.add(socket);
   socket.on("message", async (raw) => {
+    if (!wsMessageLimiter(socket)) return;
     try {
       const message = JSON.parse(String(raw));
       if (message.type === "room.watch" && user && message.roomId) {

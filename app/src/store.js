@@ -3013,12 +3013,9 @@ function statsForCompat(values) {
     return { average: null, median: null };
   }
 
-  const average = numeric.reduce((sum, value) => sum + value, 0) / numeric.length;
+  const average = parseFloat((numeric.reduce((sum, value) => sum + value, 0) / numeric.length).toFixed(2));
   const middle = Math.floor(numeric.length / 2);
-  const median =
-    numeric.length % 2 === 0
-      ? (numeric[middle - 1] + numeric[middle]) / 2
-      : numeric[middle];
+  const median = parseFloat((numeric.length % 2 === 0 ? (numeric[middle - 1] + numeric[middle]) / 2 : numeric[middle]).toFixed(2));
 
   return { average, median };
 }
