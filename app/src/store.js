@@ -210,6 +210,7 @@ const defaultSystemSettings = {
   scheduled_tasks: normalizeScheduledTasks(defaultScheduledTasks),
   room_categories_enabled: false,
   room_category_required: false,
+  report_timezone: "UTC",
 };
 
 const BOOTSTRAP_DEMO_SEEDED_KEY = "bootstrap_demo_seeded";
@@ -1288,6 +1289,7 @@ export async function getSettings() {
     scheduledTasks: attachScheduledTaskMetadata(map.scheduled_tasks || defaultScheduledTasks),
     roomCategoriesEnabled: Boolean(map.room_categories_enabled),
     roomCategoryRequired: Boolean(map.room_category_required),
+    reportTimezone: map.report_timezone || "UTC",
   };
 }
 
@@ -3177,6 +3179,7 @@ export async function getSettingsCompat() {
     roomCategoriesEnabled: settings.roomCategoriesEnabled,
     roomCategoryRequired: settings.roomCategoryRequired,
     roomCategories,
+    reportTimezone: settings.reportTimezone || "UTC",
   };
 }
 

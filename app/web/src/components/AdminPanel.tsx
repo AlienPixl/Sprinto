@@ -2,6 +2,15 @@ import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "re
 import { ActiveDirectoryTestResult, AdminOverview, AuditLog, Deck, JiraFilterConnector, JiraFilterOperator, JiraImportFilters, JiraIntegrationSettings, JiraStatus, Role, RoomCategory, ScheduledTaskSchedule, SettingsOverview, User } from "../lib/types";
 import { validatePassword, validatePasswordMatch, type PasswordValidationResult } from "../lib/passwordValidator";
 
+function tzOffset(tz: string): string {
+  return (
+    new Intl.DateTimeFormat("en", { timeZone: tz, timeZoneName: "shortOffset" })
+      .formatToParts(new Date())
+      .find((p) => p.type === "timeZoneName")
+      ?.value?.replace("GMT", "UTC") ?? ""
+  );
+}
+
 type DeckFormState = { name: string; values: string };
 type AdminTab = "settings" | "integrations" | "updates" | "rooms" | "users" | "roles" | "scheduled-tasks" | "decks" | "audit-logs" | "active-sessions";
 
@@ -650,6 +659,7 @@ export function AdminPanel({
   const [roomCategoriesOpen, setRoomCategoriesOpen] = useState(false);
   const [roomGeneralOpen, setRoomGeneralOpen] = useState(false);
   const [issueListOpen, setIssueListOpen] = useState(false);
+  const [dateTimeOpen, setDateTimeOpen] = useState(false);
   const [roomCategoryEditing, setRoomCategoryEditing] = useState<{ id: string; name: string } | null>(null);
   const [roomCategoryDraft, setRoomCategoryDraft] = useState("");
   const [roomCategoryBusy, setRoomCategoryBusy] = useState(false);
@@ -2299,6 +2309,68 @@ export function AdminPanel({
                           Supported favicon files: PNG, ICO, SVG. PNG is recommended for transparent background and good browser support.
                         </p>
                       </div>
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="settings-category">
+                  <button
+                    className={`settings-category__toggle ${dateTimeOpen ? "is-open" : ""}`}
+                    onClick={() => setDateTimeOpen((c) => !c)}
+                    type="button"
+                  >
+                    <span>Date and Time</span>
+                    <span className="settings-category__chevron">{dateTimeOpen ? "▾" : "▸"}</span>
+                  </button>
+                  {dateTimeOpen ? (
+                    <div className="settings-category__content">
+                      <label>
+                        <span>Report timezone</span>
+                        <select
+                          value={settings.reportTimezone || "UTC"}
+                          onChange={(e) => setSettings({ ...settings, reportTimezone: e.target.value })}
+                        >
+                          <optgroup label="UTC">
+                            <option value="UTC">UTC ({tzOffset("UTC")})</option>
+                          </optgroup>
+                          <optgroup label="Europe">
+                            <option value="Europe/Prague">Europe/Prague — CET/CEST ({tzOffset("Europe/Prague")})</option>
+                            <option value="Europe/London">Europe/London — GMT/BST ({tzOffset("Europe/London")})</option>
+                            <option value="Europe/Berlin">Europe/Berlin — CET/CEST ({tzOffset("Europe/Berlin")})</option>
+                            <option value="Europe/Paris">Europe/Paris — CET/CEST ({tzOffset("Europe/Paris")})</option>
+                            <option value="Europe/Amsterdam">Europe/Amsterdam — CET/CEST ({tzOffset("Europe/Amsterdam")})</option>
+                            <option value="Europe/Warsaw">Europe/Warsaw — CET/CEST ({tzOffset("Europe/Warsaw")})</option>
+                            <option value="Europe/Bratislava">Europe/Bratislava — CET/CEST ({tzOffset("Europe/Bratislava")})</option>
+                            <option value="Europe/Vienna">Europe/Vienna — CET/CEST ({tzOffset("Europe/Vienna")})</option>
+                            <option value="Europe/Zurich">Europe/Zurich — CET/CEST ({tzOffset("Europe/Zurich")})</option>
+                            <option value="Europe/Stockholm">Europe/Stockholm — CET/CEST ({tzOffset("Europe/Stockholm")})</option>
+                            <option value="Europe/Helsinki">Europe/Helsinki — EET/EEST ({tzOffset("Europe/Helsinki")})</option>
+                            <option value="Europe/Kiev">Europe/Kiev — EET/EEST ({tzOffset("Europe/Kiev")})</option>
+                            <option value="Europe/Moscow">Europe/Moscow — MSK ({tzOffset("Europe/Moscow")})</option>
+                          </optgroup>
+                          <optgroup label="Americas">
+                            <option value="America/New_York">America/New_York — EST/EDT ({tzOffset("America/New_York")})</option>
+                            <option value="America/Chicago">America/Chicago — CST/CDT ({tzOffset("America/Chicago")})</option>
+                            <option value="America/Denver">America/Denver — MST/MDT ({tzOffset("America/Denver")})</option>
+                            <option value="America/Los_Angeles">America/Los_Angeles — PST/PDT ({tzOffset("America/Los_Angeles")})</option>
+                            <option value="America/Toronto">America/Toronto — EST/EDT ({tzOffset("America/Toronto")})</option>
+                            <option value="America/Vancouver">America/Vancouver — PST/PDT ({tzOffset("America/Vancouver")})</option>
+                            <option value="America/Sao_Paulo">America/Sao_Paulo — BRT ({tzOffset("America/Sao_Paulo")})</option>
+                          </optgroup>
+                          <optgroup label="Asia / Pacific">
+                            <option value="Asia/Dubai">Asia/Dubai — GST ({tzOffset("Asia/Dubai")})</option>
+                            <option value="Asia/Kolkata">Asia/Kolkata — IST ({tzOffset("Asia/Kolkata")})</option>
+                            <option value="Asia/Bangkok">Asia/Bangkok — ICT ({tzOffset("Asia/Bangkok")})</option>
+                            <option value="Asia/Singapore">Asia/Singapore — SGT ({tzOffset("Asia/Singapore")})</option>
+                            <option value="Asia/Shanghai">Asia/Shanghai — CST ({tzOffset("Asia/Shanghai")})</option>
+                            <option value="Asia/Tokyo">Asia/Tokyo — JST ({tzOffset("Asia/Tokyo")})</option>
+                            <option value="Asia/Seoul">Asia/Seoul — KST ({tzOffset("Asia/Seoul")})</option>
+                            <option value="Australia/Sydney">Australia/Sydney — AEST/AEDT ({tzOffset("Australia/Sydney")})</option>
+                            <option value="Pacific/Auckland">Pacific/Auckland — NZST/NZDT ({tzOffset("Pacific/Auckland")})</option>
+                          </optgroup>
+                        </select>
+                      </label>
+                      <small>Timezone used in Jira comments and PDF reports.</small>
                     </div>
                   ) : null}
                 </div>

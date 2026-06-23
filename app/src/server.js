@@ -2313,14 +2313,17 @@ app.post("/api/rooms/:roomId/jira/issues/:issueId/report", requireUser, requireJ
       return json(res, { error: "PDF report can only be attached when Jira comment posting is enabled." }, 400);
     }
     const sentAt = new Date().toISOString();
+    const reportTimezone = settings.reportTimezone || "UTC";
     const filename = buildSprintoReportFilename(roomIssue.externalIssueKey, roomIssue.title);
     const initialCommentDocument = includeComment && !includePdf
       ? createIssueReportComment(report, {
           sentAt,
           filename,
+          timezone: reportTimezone,
         })
       : null;
     report.sentAt = sentAt;
+    report.timezone = reportTimezone;
     const pdfBuffer = includePdf ? await createSimplePdfBuffer(report) : null;
     const result = await postJiraIssueReport(settings, roomIssue.externalIssueKey, {
       commentDocument: initialCommentDocument,
@@ -2333,6 +2336,7 @@ app.post("/api/rooms/:roomId/jira/issues/:issueId/report", requireUser, requireJ
           sentAt,
           filename,
           attachment: result.attachment,
+          timezone: reportTimezone,
         }),
       });
     }
@@ -2703,6 +2707,14 @@ app.put("/api/admin/settings", requireUser, requireManageSettings, async (req, r
     brand_logo_data_url: settings.logoDataUrl || "",
     brand_favicon_data_url: settings.faviconDataUrl || "",
     scheduled_tasks: settings.scheduledTasks || {},
+    report_timezone: (() => {
+      try {
+        if (settings.reportTimezone) Intl.DateTimeFormat(undefined, { timeZone: settings.reportTimezone });
+        return settings.reportTimezone || "UTC";
+      } catch {
+        return "UTC";
+      }
+    })(),
   });
   const canceledPendingMigrationUserIds = !entraMigrationEnabled ? await cancelAllPendingEntraMigrations() : [];
   await scheduleNextScheduledTaskRun();
@@ -2722,6 +2734,14 @@ app.put("/api/admin/settings/rooms", requireUser, requireManageRoomSettings, asy
 
   const validSorts = new Set(["issue", "reporter", "priority"]);
   const validHighlightModes = new Set(["none", "most-frequent", "highest"]);
+  const safeReportTimezone = (() => {
+    try {
+      if (settings.reportTimezone) Intl.DateTimeFormat(undefined, { timeZone: settings.reportTimezone });
+      return settings.reportTimezone || "UTC";
+    } catch {
+      return "UTC";
+    }
+  })();
   await upsertSettings({
     default_timer_seconds: Number(settings.defaultTimerSeconds) || 1,
     require_story_id: Boolean(settings.requireStoryId),
@@ -2730,6 +2750,7 @@ app.put("/api/admin/settings/rooms", requireUser, requireManageRoomSettings, asy
     default_deck_id: defaultDeck?.id || decks.find((deck) => deck.isDefault)?.id || decks[0]?.id,
     room_categories_enabled: Boolean(settings.roomCategoriesEnabled),
     room_category_required: Boolean(settings.roomCategoryRequired),
+    report_timezone: safeReportTimezone,
   });
 
   const nextSettings = sanitizeSettingsForAudit(await getSettingsCompat());

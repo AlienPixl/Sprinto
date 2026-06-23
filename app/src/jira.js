@@ -711,6 +711,7 @@ export async function postJiraIssueReport(settings, issueKey, payload) {
 
 export function createIssueReportComment(report, options = {}) {
   const sentAt = options.sentAt || new Date().toISOString();
+  const timezone = options.timezone || report.timezone || "UTC";
   const attachmentUrl = options.attachment?.content || options.attachment?.self || "";
   const attachmentLabel = options.attachment?.filename || options.filename || "";
   const content = [
@@ -721,7 +722,7 @@ export function createIssueReportComment(report, options = {}) {
     },
     {
       type: "paragraph",
-      content: [{ type: "text", text: formatReportTimestamp(sentAt) }],
+      content: [{ type: "text", text: formatReportTimestamp(sentAt, timezone) }],
     },
   ];
   if (attachmentLabel && attachmentUrl) {
@@ -751,15 +752,24 @@ export function createIssueReportComment(report, options = {}) {
   };
 }
 
-function formatReportTimestamp(value) {
+function formatTimezoneAbbreviation(timeZone) {
+  const raw = new Intl.DateTimeFormat("en", { timeZoneName: "shortOffset", timeZone })
+    .formatToParts(new Date())
+    .find((p) => p.type === "timeZoneName")?.value ?? timeZone;
+  return raw.replace("GMT", "UTC");
+}
+
+function formatReportTimestamp(value, timeZone = "UTC") {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
     return String(value || "");
   }
-  return new Intl.DateTimeFormat("cs-CZ", {
+  const formatted = new Intl.DateTimeFormat("cs-CZ", {
     dateStyle: "medium",
     timeStyle: "short",
+    timeZone,
   }).format(date);
+  return `${formatted} ${formatTimezoneAbbreviation(timeZone)}`;
 }
 
 export async function createSimplePdfBuffer(report) {
@@ -811,9 +821,9 @@ async function createFallbackPdfBuffer(report) {
     "Sprinto Voting Report",
     `Room: ${report.roomName || "-"}`,
     `Issue: ${report.issueKey || "-"} - ${report.issueTitle || "-"}`,
-    `Voting started: ${formatReportTimestamp(report.startedAt)}`,
-    `Revealed at: ${formatReportTimestamp(report.revealedAt)}`,
-    `Generated: ${formatReportTimestamp(report.sentAt)}`,
+    `Voting started: ${formatReportTimestamp(report.startedAt, report.timezone || "UTC")}`,
+    `Revealed at: ${formatReportTimestamp(report.revealedAt, report.timezone || "UTC")}`,
+    `Generated: ${formatReportTimestamp(report.sentAt, report.timezone || "UTC")}`,
     `Final value: ${report.finalValue || "-"}`,
     `Average: ${report.average || "-"}`,
     `Median: ${report.median || "-"}`,
@@ -1002,9 +1012,10 @@ async function drawReportHeader(pdfDoc, page, fonts, report, x, topY, width) {
     color: rgb(0.88, 0.84, 0.76),
   });
 
-  drawLabelValueCell(page, fonts, "Voting started", formatPdfDateTime(report.startedAt), x + 16, topRowY, metaColWidth, metaCellHeight, muted, titleColor);
-  drawLabelValueCell(page, fonts, "Revealed at", formatPdfDateTime(report.revealedAt), x + 16 + metaColWidth, topRowY, metaColWidth, metaCellHeight, muted, titleColor);
-  drawLabelValueCell(page, fonts, "Generated", formatPdfDateTime(report.sentAt), x + 16 + metaColWidth * 2, topRowY, metaColWidth, metaCellHeight, muted, titleColor);
+  const tz = report.timezone || "UTC";
+  drawLabelValueCell(page, fonts, "Voting started", formatPdfDateTime(report.startedAt, tz), x + 16, topRowY, metaColWidth, metaCellHeight, muted, titleColor);
+  drawLabelValueCell(page, fonts, "Revealed at", formatPdfDateTime(report.revealedAt, tz), x + 16 + metaColWidth, topRowY, metaColWidth, metaCellHeight, muted, titleColor);
+  drawLabelValueCell(page, fonts, "Generated", `${formatPdfDateTime(report.sentAt, tz)} ${formatTimezoneAbbreviation(tz)}`, x + 16 + metaColWidth * 2, topRowY, metaColWidth, metaCellHeight, muted, titleColor);
   drawLabelValueCell(page, fonts, "Total voters", String(report.totalVoters ?? "-"), x + 16, bottomRowY, metaColWidth, metaCellHeight, muted, titleColor);
   drawLabelValueCell(page, fonts, "Duration", String(report.durationLabel || "-"), x + 16 + metaColWidth, bottomRowY, metaColWidth, metaCellHeight, muted, titleColor);
   drawLabelValueCell(page, fonts, "Final value", String(report.finalValue || "-"), x + 16 + metaColWidth * 2, bottomRowY, metaColWidth, metaCellHeight, muted, titleColor);
@@ -1245,7 +1256,7 @@ async function drawVoteTable(pdfDoc, page, fonts, report, options) {
     const votedAtX = estimateX + columns[1].width;
     const offsetX = votedAtX + columns[2].width;
     drawCenteredText(page, pdfText(row.value || "-", fonts.unicode), fonts.bold, 9, estimateX, y - 16, columns[1].width, rgb(0.12, 0.19, 0.16));
-    drawCenteredText(page, pdfText(formatTimeOnly(row.votedAt), fonts.unicode), fonts.regular, 8, votedAtX, y - 16, columns[2].width, rgb(0.22, 0.25, 0.22));
+    drawCenteredText(page, pdfText(formatTimeOnly(row.votedAt, report.timezone || "UTC"), fonts.unicode), fonts.regular, 8, votedAtX, y - 16, columns[2].width, rgb(0.22, 0.25, 0.22));
     drawCenteredText(page, pdfText(formatOffset(row.votedAt, report.startedAt), fonts.unicode), fonts.regular, 8, offsetX, y - 16, columns[3].width, rgb(0.22, 0.25, 0.22));
     y -= rowHeight;
   }
@@ -1367,14 +1378,15 @@ function buildPdfTimelineLayout(events, report, fonts, x, width, startedAt, rang
     above: [],
     below: [],
   };
-  const start = createPdfTimelineAnchorLayout("Start", formatTimeOnly(report.startedAt), trackStartX, fonts, x, width, occupiedBySide, rgb(0.23, 0.36, 0.31));
-  const reveal = createPdfTimelineAnchorLayout("Reveal", formatTimeOnly(report.revealedAt), trackEndX, fonts, x, width, occupiedBySide, timelineColor("reveal"));
+  const reportTz = report.timezone || "UTC";
+  const start = createPdfTimelineAnchorLayout("Start", formatTimeOnly(report.startedAt, reportTz), trackStartX, fonts, x, width, occupiedBySide, rgb(0.23, 0.36, 0.31));
+  const reveal = createPdfTimelineAnchorLayout("Reveal", formatTimeOnly(report.revealedAt, reportTz), trackEndX, fonts, x, width, occupiedBySide, timelineColor("reveal"));
   const startInterval = pdfTimelineInterval(start.markerX, start.labelWidth, x, width);
   const revealInterval = pdfTimelineInterval(reveal.markerX, reveal.labelWidth, x, width);
   const eventLayouts = events.map((event, index) => {
     const markerX = trackStartX + ((index + 1) / (events.length + 1)) * (trackEndX - trackStartX);
     const title = timelineEventTitle(event);
-    const time = formatTimeOnly(event.occurredAt);
+    const time = formatTimeOnly(event.occurredAt, reportTz);
     const labelWidth = estimatePdfTimelineLabelWidth(title, time, fonts);
     const interval = pdfTimelineInterval(markerX, labelWidth, x, width);
     const defaultSide = index % 2 === 0 ? "below" : "above";
@@ -1662,17 +1674,18 @@ function resolveFittedFontSize(text, font, initialSize, maxWidth, minSize = 6.5)
   return size;
 }
 
-function formatPdfDateTime(value) {
+function formatPdfDateTime(value, timeZone = "UTC") {
   if (!value) return "-";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return String(value);
   return new Intl.DateTimeFormat("cs-CZ", {
     dateStyle: "medium",
     timeStyle: "short",
+    timeZone,
   }).format(date);
 }
 
-function formatTimeOnly(value) {
+function formatTimeOnly(value, timeZone = "UTC") {
   if (!value) return "-";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "-";
@@ -1680,6 +1693,7 @@ function formatTimeOnly(value) {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
+    timeZone,
   }).format(date);
 }
 

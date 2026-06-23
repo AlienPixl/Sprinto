@@ -2849,39 +2849,61 @@ function buildHistoryFrame(issue: Issue | null, playbackPercent: number): Histor
 
   const start = new Date(issue.startedAt).getTime();
   const end = issue.endedAt ? new Date(issue.endedAt).getTime() : issue.revealedAt ? new Date(issue.revealedAt).getTime() : start;
-  const previewAtMs = start + (playbackPercent / 100) * Math.max(1, end - start);
-  const visibleVotes = Object.fromEntries(
-    Object.entries(issue.votes).filter(([, vote]) => new Date(vote.votedAt).getTime() <= previewAtMs)
-  );
+  const span = Math.max(1, end - start);
+
+  // Map scrubber through TIMELINE margins so start/reveal anchors align exactly.
+  const trackFraction = (playbackPercent - TIMELINE_MIN) / (TIMELINE_MAX - TIMELINE_MIN);
+  const fraction = Math.max(0, Math.min(1, (trackFraction - TIMELINE_START / 100) / ((TIMELINE_END - TIMELINE_START) / 100)));
+  const previewAtMs = start + fraction * span;
+
+  // Events on the timeline are evenly distributed by buildTimelineLayout, not by timestamp.
+  // Compute k = how many visual dots the scrubber has passed, then use the k-th event's
+  // timestamp as cutoffMs so state changes exactly when the scrubber crosses a dot.
+  const scrubberCSS = playbackToTrackPercent(playbackPercent);
+  const allTimelineEvents = buildTimelineEvents(issue);
+  const N = allTimelineEvents.length;
+  const k = N > 0
+    ? Math.max(0, Math.min(N, Math.floor((N + 1) * (scrubberCSS - TIMELINE_START) / (TIMELINE_END - TIMELINE_START))))
+    : 0;
+  const cutoffMs = k > 0
+    ? new Date(allTimelineEvents[k - 1].occurredAt).getTime()
+    : N > 0
+      ? new Date(allTimelineEvents[0].occurredAt).getTime() - 1
+      : end;
+
+  const sortedEvents = [...issue.events].sort((a, b) => +new Date(a.occurredAt) - +new Date(b.occurredAt));
+  const visibleVoteEntries = new Map<string, Vote>();
   const participants = new Map<string, Participant>();
 
-  [...issue.events]
-    .sort((left, right) => +new Date(left.occurredAt) - +new Date(right.occurredAt))
-    .filter((event) => +new Date(event.occurredAt) <= previewAtMs)
-    .forEach((event) => {
-      if (event.type === "join" && event.participantId) {
-        const nameParts = parseNameParts(event.participantName ?? event.participantId);
-        participants.set(event.participantId, {
-          id: event.participantId,
-          firstName: nameParts.firstName,
-          lastName: nameParts.lastName,
-          email: "",
-          voted: Boolean(visibleVotes[event.participantId]),
-          canVote: event.participantCanVote ?? true,
-        });
-      }
-      if (event.type === "leave" && event.participantId) {
-        participants.delete(event.participantId);
-      }
-    });
+  for (const event of sortedEvents) {
+    if (+new Date(event.occurredAt) > cutoffMs) break;
+    if (event.type === "vote" && event.participantId && event.value != null) {
+      visibleVoteEntries.set(event.participantId, { userId: event.participantId, value: event.value, votedAt: event.occurredAt });
+    }
+    if (event.type === "join" && event.participantId) {
+      const nameParts = parseNameParts(event.participantName ?? event.participantId);
+      participants.set(event.participantId, {
+        id: event.participantId,
+        firstName: nameParts.firstName,
+        lastName: nameParts.lastName,
+        email: "",
+        voted: false,
+        canVote: event.participantCanVote ?? true,
+      });
+    }
+    if (event.type === "leave" && event.participantId) {
+      participants.delete(event.participantId);
+    }
+  }
 
-  Object.keys(visibleVotes).forEach((participantId) => {
+  for (const participantId of visibleVoteEntries.keys()) {
     const current = participants.get(participantId);
     if (current) {
       participants.set(participantId, { ...current, voted: true });
     }
-  });
+  }
 
+  const visibleVotes = Object.fromEntries(visibleVoteEntries);
   const revealAtMs = issue.revealedAt ? new Date(issue.revealedAt).getTime() : end;
 
   return {
@@ -2889,7 +2911,7 @@ function buildHistoryFrame(issue: Issue | null, playbackPercent: number): Histor
     revealed: previewAtMs >= revealAtMs,
     visibleVotes,
     visibleParticipants: Array.from(participants.values()),
-    stats: statsFromVotes(Object.values(visibleVotes))
+    stats: statsFromVotes(Object.values(visibleVotes)),
   };
 }
 

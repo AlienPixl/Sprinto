@@ -383,6 +383,7 @@ export type SettingsOverview = {
   roomCategoriesEnabled: boolean;
   roomCategoryRequired: boolean;
   roomCategories: RoomCategory[];
+  reportTimezone: string;
 };
 
 export type ScheduledTaskFrequency = "minutes" | "hourly" | "daily" | "selected_weekdays" | "weekly" | "monthly" | "yearly";
