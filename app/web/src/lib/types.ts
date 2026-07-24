@@ -153,7 +153,7 @@ export type Permission = {
   description: string;
 };
 
-export type JiraFilterField = "storyPoints" | "originalEstimate" | "status";
+export type JiraFilterField = "storyPoints" | "originalEstimate" | "status" | "labels";
 export type JiraFilterOperator = "IS EMPTY" | "IS NOT EMPTY" | "=" | "!=" | "IN" | "NOT IN";
 export type JiraFilterConnector = "AND" | "OR";
 

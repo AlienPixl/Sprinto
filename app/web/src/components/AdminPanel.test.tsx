@@ -295,6 +295,7 @@ function renderAdminPanel({
       onUpdateRoomCategory={onUpdateRoomCategory}
       onDeleteRoomCategory={onDeleteRoomCategory}
       onFetchJiraStatuses={vi.fn().mockResolvedValue([])}
+      onFetchJiraLabels={vi.fn().mockResolvedValue([])}
     />,
   );
 }
@@ -509,6 +510,7 @@ describe("AdminPanel", () => {
         onUpdateRoomCategory={vi.fn().mockResolvedValue(undefined)}
         onDeleteRoomCategory={vi.fn().mockResolvedValue(undefined)}
         onFetchJiraStatuses={vi.fn().mockResolvedValue([])}
+        onFetchJiraLabels={vi.fn().mockResolvedValue([])}
       />,
     );
 
@@ -562,6 +564,7 @@ describe("AdminPanel", () => {
         onUpdateRoomCategory={vi.fn().mockResolvedValue(undefined)}
         onDeleteRoomCategory={vi.fn().mockResolvedValue(undefined)}
         onFetchJiraStatuses={vi.fn().mockResolvedValue([])}
+        onFetchJiraLabels={vi.fn().mockResolvedValue([])}
       />,
     );
 

@@ -2728,6 +2728,12 @@ button:disabled {
   font-style: italic;
 }
 
+.jira-filter-status-empty--error {
+  color: #ff6b6b;
+  opacity: 0.9;
+  font-style: normal;
+}
+
 .jira-filter-remove {
   flex-shrink: 0;
   width: 1.6rem;
@@ -8786,6 +8792,10 @@ html[data-theme="glow"] .queue-item__icon--danger {
 html[data-theme="glow"] .account-settings-message--error {
   background: rgba(196, 84, 84, 0.1);
   border-left-color: #c45454;
+}
+
+html[data-theme="glow"] .jira-filter-status-empty--error {
+  color: #c45454;
 }
 
 html[data-theme="glow"] .room-settings-panel__row-label {

@@ -6,6 +6,7 @@ import {
   buildJiraWorklogReport,
   createIssueReportComment,
   createSimplePdfBuffer,
+  getJiraLabels,
   listJiraAssignableUsers,
   listJiraBoards,
   listJiraIssues,
@@ -342,6 +343,105 @@ describe("jira helpers", () => {
     expect(issues[0].key).toBe("PROJ-1");
     expect(issues[1].key).toBe("PROJ-2");
     expect(issues[0].reporter).toBe("Alice");
+  });
+
+  it("filters sprint issues by labels using IN and NOT IN", async () => {
+    const buildIssuesResponse = () => ({
+      ok: true,
+      json: async () => ({
+        issues: [
+          {
+            id: "1",
+            key: "PROJ-1",
+            fields: {
+              summary: "First",
+              priority: { id: "2", name: "High" },
+              reporter: { displayName: "Alice" },
+              timetracking: {},
+              status: { name: "To Do" },
+              issuetype: { name: "Story" },
+              labels: ["frontend", "urgent"],
+              customfield_10016: null,
+            },
+          },
+          {
+            id: "2",
+            key: "PROJ-2",
+            fields: {
+              summary: "Second",
+              priority: { id: "4", name: "Low" },
+              reporter: { displayName: "Bob" },
+              timetracking: {},
+              status: { name: "To Do" },
+              issuetype: { name: "Story" },
+              labels: ["backend"],
+              customfield_10016: null,
+            },
+          },
+          {
+            id: "3",
+            key: "PROJ-3",
+            fields: {
+              summary: "Third",
+              priority: { id: "1", name: "Highest" },
+              reporter: { displayName: "Carol" },
+              timetracking: {},
+              status: { name: "To Do" },
+              issuetype: { name: "Story" },
+              labels: [],
+              customfield_10016: null,
+            },
+          },
+        ],
+        total: 3,
+      }),
+    });
+
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => [{ id: "customfield_10016", name: "Story Points" }] })
+      .mockResolvedValueOnce(buildIssuesResponse()) as unknown as typeof fetch);
+
+    const inIssues = await listJiraSprintIssues(settings, {
+      boardId: "10",
+      sprintId: "20",
+      filters: {
+        conditions: [{ field: "labels", operator: "IN", value: ["frontend"] }],
+        connectors: [],
+      },
+    });
+    expect(inIssues).toHaveLength(1);
+    expect(inIssues[0].key).toBe("PROJ-1");
+
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => [{ id: "customfield_10016", name: "Story Points" }] })
+      .mockResolvedValueOnce(buildIssuesResponse()) as unknown as typeof fetch);
+
+    const notInIssues = await listJiraSprintIssues(settings, {
+      boardId: "10",
+      sprintId: "20",
+      filters: {
+        conditions: [{ field: "labels", operator: "NOT IN", value: ["frontend", "backend"] }],
+        connectors: [],
+      },
+    });
+    expect(notInIssues).toHaveLength(1);
+    expect(notInIssues[0].key).toBe("PROJ-3");
+  });
+
+  it("loads distinct sorted labels across pages", async () => {
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ values: ["urgent", "frontend"], isLast: false }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ values: ["backend", "urgent"], isLast: true }),
+      }) as unknown as typeof fetch);
+
+    const labels = await getJiraLabels(settings);
+
+    expect(labels).toEqual(["backend", "frontend", "urgent"]);
   });
 
   it("filters out kanban boards unless they are explicitly enabled", async () => {

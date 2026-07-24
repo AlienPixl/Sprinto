@@ -116,6 +116,7 @@ const defaultProps = {
   onFetchJiraBoards: vi.fn().mockResolvedValue([]),
   onFetchJiraSprints: vi.fn().mockResolvedValue([]),
   onFetchJiraStatuses: vi.fn().mockResolvedValue([]),
+  onFetchJiraLabels: vi.fn().mockResolvedValue([]),
   onPreviewJiraIssues: vi.fn().mockResolvedValue([]),
   onImportJiraIssues: vi.fn().mockResolvedValue({ added: 0, updated: 0, removed: 0 }),
   onApplyJiraIssueEstimate: vi.fn().mockResolvedValue({ updatedFields: [] }),

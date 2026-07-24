@@ -114,6 +114,7 @@ type AdminPanelProps = {
   onUpdateRoomCategory: (categoryId: string, name: string) => Promise<void>;
   onDeleteRoomCategory: (categoryId: string) => Promise<void>;
   onFetchJiraStatuses: () => Promise<JiraStatus[]>;
+  onFetchJiraLabels: () => Promise<string[]>;
 };
 
 function parseDeckValues(raw: string): string[] {
@@ -571,6 +572,7 @@ export function AdminPanel({
   onUpdateRoomCategory,
   onDeleteRoomCategory,
   onFetchJiraStatuses,
+  onFetchJiraLabels,
 }: AdminPanelProps) {
   const [settings, setSettings] = useState<SettingsOverview | null>(null);
   const [roleDrafts, setRoleDrafts] = useState<Record<string, string[]>>({});
@@ -656,6 +658,10 @@ export function AdminPanel({
   const [jiraAdminStatuses, setJiraAdminStatuses] = useState<JiraStatus[]>([]);
   const [jiraAdminStatusPickerIndex, setJiraAdminStatusPickerIndex] = useState(-1);
   const jiraAdminStatusPickerRef = useRef<HTMLDivElement | null>(null);
+  const [jiraAdminLabels, setJiraAdminLabels] = useState<string[]>([]);
+  const [jiraAdminLabelsError, setJiraAdminLabelsError] = useState<string | null>(null);
+  const [jiraAdminLabelPickerIndex, setJiraAdminLabelPickerIndex] = useState(-1);
+  const jiraAdminLabelPickerRef = useRef<HTMLDivElement | null>(null);
   const [roomCategoriesOpen, setRoomCategoriesOpen] = useState(false);
   const [roomGeneralOpen, setRoomGeneralOpen] = useState(false);
   const [issueListOpen, setIssueListOpen] = useState(false);
@@ -835,15 +841,32 @@ export function AdminPanel({
       if (!jiraAdminStatusPickerRef.current?.contains(event.target as Node)) {
         setJiraAdminStatusPickerIndex(-1);
       }
+      if (!jiraAdminLabelPickerRef.current?.contains(event.target as Node)) {
+        setJiraAdminLabelPickerIndex(-1);
+      }
     }
 
     window.addEventListener("mousedown", handleClickOutside);
     return () => window.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
+  function loadJiraAdminLabels() {
+    setJiraAdminLabelsError(null);
+    return onFetchJiraLabels()
+      .then((labels) => {
+        setJiraAdminLabels(labels);
+        setJiraAdminLabelsError(null);
+      })
+      .catch((error) => {
+        setJiraAdminLabels([]);
+        setJiraAdminLabelsError(error instanceof Error ? error.message : "Failed to load Jira labels.");
+      });
+  }
+
   useEffect(() => {
     if (!jiraSettingsOpen) return;
     onFetchJiraStatuses().then(setJiraAdminStatuses).catch(() => {});
+    void loadJiraAdminLabels();
   }, [jiraSettingsOpen]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!overview) {
@@ -2691,9 +2714,9 @@ export function AdminPanel({
                               <select
                                 value={condition.field}
                                 onChange={(event) => {
-                                  const newField = event.target.value as "storyPoints" | "originalEstimate" | "status";
+                                  const newField = event.target.value as "storyPoints" | "originalEstimate" | "status" | "labels";
                                   const conditions = [...settings.integrations.jira.defaultImportFilters.conditions];
-                                  conditions[index] = newField === "status"
+                                  conditions[index] = (newField === "status" || newField === "labels")
                                     ? { field: newField, operator: "IN", value: [] }
                                     : { field: newField, operator: "IS EMPTY", value: null };
                                   setSettings({ ...settings, integrations: { ...settings.integrations, jira: { ...settings.integrations.jira, defaultImportFilters: { ...settings.integrations.jira.defaultImportFilters, conditions } } } });
@@ -2702,17 +2725,18 @@ export function AdminPanel({
                                 <option value="storyPoints">Story Points</option>
                                 <option value="originalEstimate">Original Estimate</option>
                                 <option value="status">Status</option>
+                                <option value="labels">Labels</option>
                               </select>
                               <select
                                 value={condition.operator}
                                 onChange={(event) => {
                                   const newOp = event.target.value as JiraFilterOperator;
                                   const conditions = [...settings.integrations.jira.defaultImportFilters.conditions];
-                                  conditions[index] = { ...conditions[index], operator: newOp, value: condition.field === "status" ? [] : null };
+                                  conditions[index] = { ...conditions[index], operator: newOp, value: (condition.field === "status" || condition.field === "labels") ? [] : null };
                                   setSettings({ ...settings, integrations: { ...settings.integrations, jira: { ...settings.integrations.jira, defaultImportFilters: { ...settings.integrations.jira.defaultImportFilters, conditions } } } });
                                 }}
                               >
-                                {condition.field === "status" ? (
+                                {condition.field === "status" || condition.field === "labels" ? (
                                   <>
                                     <option value="IN">IN</option>
                                     <option value="NOT IN">NOT IN</option>
@@ -2769,6 +2793,62 @@ export function AdminPanel({
                                             >
                                               <span className="jira-filter-status-option__check" aria-hidden="true">{checked ? "✓" : ""}</span>
                                               {s.name}
+                                            </button>
+                                          );
+                                        })}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })()}
+                              {condition.field === "labels" && (() => {
+                                const isOpen = jiraAdminLabelPickerIndex === index;
+                                const selectedValues = Array.isArray(condition.value) ? condition.value as string[] : [];
+                                const label = selectedValues.length === 0
+                                  ? "— pick labels —"
+                                  : selectedValues.length === 1
+                                    ? selectedValues[0]
+                                    : `${selectedValues.length} labels`;
+                                return (
+                                  <div
+                                    className="jira-filter-status-picker"
+                                    ref={isOpen ? jiraAdminLabelPickerRef : null}
+                                  >
+                                    <button
+                                      className={`jira-filter-status-trigger${isOpen ? " is-open" : ""}`}
+                                      type="button"
+                                      onClick={() => {
+                                        setJiraAdminLabelPickerIndex(isOpen ? -1 : index);
+                                        if (!isOpen) void loadJiraAdminLabels();
+                                      }}
+                                    >
+                                      <span className="jira-filter-status-trigger__label">{label}</span>
+                                      <span className="jira-filter-status-trigger__caret" aria-hidden="true">{isOpen ? "▴" : "▾"}</span>
+                                    </button>
+                                    {isOpen && (
+                                      <div className="jira-filter-status-dropdown">
+                                        {jiraAdminLabelsError ? (
+                                          <span className="jira-filter-status-empty jira-filter-status-empty--error">Failed to load labels from Jira: {jiraAdminLabelsError}</span>
+                                        ) : jiraAdminLabels.length === 0 ? (
+                                          <span className="jira-filter-status-empty">No labels found in Jira</span>
+                                        ) : null}
+                                        {jiraAdminLabels.map((l) => {
+                                          const checked = selectedValues.includes(l);
+                                          return (
+                                            <button
+                                              key={l}
+                                              className={`jira-filter-status-option${checked ? " is-selected" : ""}`}
+                                              type="button"
+                                              onClick={() => {
+                                                const conditions = [...settings.integrations.jira.defaultImportFilters.conditions];
+                                                const cur = Array.isArray(conditions[index].value) ? conditions[index].value as string[] : [];
+                                                const next = checked ? cur.filter((v) => v !== l) : [...cur, l];
+                                                conditions[index] = { ...conditions[index], value: next };
+                                                setSettings({ ...settings, integrations: { ...settings.integrations, jira: { ...settings.integrations.jira, defaultImportFilters: { ...settings.integrations.jira.defaultImportFilters, conditions } } } });
+                                              }}
+                                            >
+                                              <span className="jira-filter-status-option__check" aria-hidden="true">{checked ? "✓" : ""}</span>
+                                              {l}
                                             </button>
                                           );
                                         })}

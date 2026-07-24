@@ -38,6 +38,7 @@ import {
   listJiraBoards,
   listJiraSprints,
   listJiraStatuses,
+  listJiraLabels,
   joinRoom,
   leaveRoom,
   leaveRoomKeepalive,
@@ -1135,6 +1136,7 @@ export function App() {
             onUpdateRoomCategory={handleUpdateRoomCategory}
             onDeleteRoomCategory={handleDeleteRoomCategory}
             onFetchJiraStatuses={listJiraStatuses}
+            onFetchJiraLabels={listJiraLabels}
             overview={overview}
             user={user}
           />
@@ -1198,6 +1200,7 @@ export function App() {
             onFetchJiraBoards={listJiraBoards}
             onFetchJiraSprints={listJiraSprints}
             onFetchJiraStatuses={listJiraStatuses}
+            onFetchJiraLabels={listJiraLabels}
             onImportJiraIssues={(payload) => handleImportJiraIssues(activeRoomId, payload)}
             onPostJiraIssueReport={(issueId, payload) => handlePostJiraIssueReport(activeRoomId, issueId, payload)}
             onPreviewJiraIssues={handlePreviewJiraIssues}

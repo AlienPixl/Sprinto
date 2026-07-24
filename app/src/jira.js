@@ -434,18 +434,24 @@ function sortImportedIssues(issues) {
 }
 
 function buildJiraIssuePath({ boardId, sprintId, storyPointsFieldId, startAt }) {
-  const fields = `summary,priority,reporter,timetracking,issuetype,status,${encodeURIComponent(storyPointsFieldId)}`;
+  const fields = `summary,priority,reporter,timetracking,issuetype,status,labels,${encodeURIComponent(storyPointsFieldId)}`;
   if (sprintId) {
     return `/rest/agile/1.0/board/${encodeURIComponent(boardId)}/sprint/${encodeURIComponent(sprintId)}/issue?startAt=${startAt}&maxResults=50&fields=${fields}`;
   }
   return `/rest/agile/1.0/board/${encodeURIComponent(boardId)}/issue?startAt=${startAt}&maxResults=50&fields=${fields}`;
 }
 
-function evaluateFilterCondition(condition, storyPointsValue, originalEstimateSeconds, statusId) {
+function evaluateFilterCondition(condition, storyPointsValue, originalEstimateSeconds, statusId, labels) {
   if (condition.field === "status") {
     const values = Array.isArray(condition.value) ? condition.value : [];
     if (condition.operator === "IN") return values.some((v) => String(v) === statusId);
     if (condition.operator === "NOT IN") return !values.some((v) => String(v) === statusId);
+    return true;
+  }
+  if (condition.field === "labels") {
+    const values = Array.isArray(condition.value) ? condition.value : [];
+    if (condition.operator === "IN") return values.some((v) => labels.includes(String(v)));
+    if (condition.operator === "NOT IN") return !values.some((v) => labels.includes(String(v)));
     return true;
   }
   const rawValue = condition.field === "storyPoints" ? storyPointsValue : originalEstimateSeconds;
@@ -476,12 +482,13 @@ function matchesIssueImportFilters(issue, storyPointsFieldId, filters) {
   const storyPointsValue = issue?.fields?.[storyPointsFieldId];
   const originalEstimateSeconds = parseOriginalEstimateSeconds(issue?.fields?.timetracking);
   const statusId = String(issue?.fields?.status?.id || "");
+  const labels = Array.isArray(issue?.fields?.labels) ? issue.fields.labels.map(String) : [];
 
   if (!filters.conditions || filters.conditions.length === 0) return true;
 
-  let result = evaluateFilterCondition(filters.conditions[0], storyPointsValue, originalEstimateSeconds, statusId);
+  let result = evaluateFilterCondition(filters.conditions[0], storyPointsValue, originalEstimateSeconds, statusId, labels);
   for (let i = 1; i < filters.conditions.length; i++) {
-    const condResult = evaluateFilterCondition(filters.conditions[i], storyPointsValue, originalEstimateSeconds, statusId);
+    const condResult = evaluateFilterCondition(filters.conditions[i], storyPointsValue, originalEstimateSeconds, statusId, labels);
     const connector = filters.connectors?.[i - 1] ?? "AND";
     result = connector === "OR" ? result || condResult : result && condResult;
   }
@@ -522,6 +529,23 @@ export async function getJiraStatuses(settings) {
   return Array.isArray(result)
     ? result.map((s) => ({ id: String(s.id), name: String(s.name || "") }))
     : [];
+}
+
+export async function getJiraLabels(settings) {
+  const jira = ensureJiraConfigured(settings);
+  const labels = [];
+  let startAt = 0;
+  while (startAt < 5000) {
+    const params = new URLSearchParams({ startAt: String(startAt), maxResults: "200" });
+    const page = await jiraRequest(jira, `/rest/api/3/label?${params.toString()}`);
+    const values = Array.isArray(page?.values) ? page.values.map(String) : [];
+    labels.push(...values);
+    if (page?.isLast === true || values.length === 0) {
+      break;
+    }
+    startAt += values.length;
+  }
+  return [...new Set(labels)].sort((a, b) => a.localeCompare(b));
 }
 
 export async function listJiraIssues(settings, { boardId, sprintId, filters = {} }) {

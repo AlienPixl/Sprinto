@@ -39,6 +39,7 @@ import {
   getJiraBoard,
   listJiraAssignableUsers,
   getJiraStatuses,
+  getJiraLabels,
   listJiraBoards,
   listJiraIssueLinkTypes,
   listJiraIssues,
@@ -2027,6 +2028,15 @@ app.get("/api/jira/statuses", requireUser, requireJiraImport, jiraLimiter, async
     json(res, { statuses: await getJiraStatuses(settings) });
   } catch (error) {
     json(res, { error: error instanceof Error ? error.message : "Failed to load Jira statuses." }, 400);
+  }
+});
+
+app.get("/api/jira/labels", requireUser, requireJiraImport, jiraLimiter, async (_req, res) => {
+  try {
+    const settings = await getSettings();
+    json(res, { labels: await getJiraLabels(settings) });
+  } catch (error) {
+    json(res, { error: error instanceof Error ? error.message : "Failed to load Jira labels." }, 400);
   }
 });
 

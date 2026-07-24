@@ -428,6 +428,11 @@ export async function listJiraStatuses(): Promise<JiraStatus[]> {
   return payload.statuses;
 }
 
+export async function listJiraLabels(): Promise<string[]> {
+  const payload = await request<{ labels: string[] }>("/api/jira/labels");
+  return payload.labels;
+}
+
 export async function importJiraIssues(
   roomId: string,
   payload: { boardId: string; sprintId?: string; filters: JiraImportFilters; reimportCompletedIssues?: boolean }
