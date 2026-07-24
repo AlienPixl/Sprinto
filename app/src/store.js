@@ -48,7 +48,7 @@ const defaultJiraImportFilters = {
   connectors: [],
 };
 
-const JIRA_FILTER_FIELD_VALUES = new Set(["storyPoints", "originalEstimate", "status"]);
+const JIRA_FILTER_FIELD_VALUES = new Set(["storyPoints", "originalEstimate", "status", "labels"]);
 const JIRA_FILTER_OPERATOR_VALUES = new Set(["IS EMPTY", "IS NOT EMPTY", "=", "!=", "IN", "NOT IN"]);
 
 const defaultJiraIntegrationSettings = {
@@ -273,14 +273,14 @@ function normalizeStringArray(values) {
   return [...new Set(values.map((value) => String(value || "").trim()).filter(Boolean))];
 }
 
-function normalizeJiraFilterConditions(rawConditions) {
+export function normalizeJiraFilterConditions(rawConditions) {
   if (!Array.isArray(rawConditions) || rawConditions.length === 0) {
     return defaultJiraImportFilters.conditions;
   }
   const valid = rawConditions
     .filter((c) => c && typeof c === "object" && JIRA_FILTER_FIELD_VALUES.has(c.field) && JIRA_FILTER_OPERATOR_VALUES.has(c.operator))
     .map((c) => {
-      if (c.field === "status") {
+      if (c.field === "status" || c.field === "labels") {
         return { field: c.field, operator: c.operator, value: Array.isArray(c.value) ? c.value.map(String) : [] };
       }
       const numVal = c.value === null || c.value === undefined ? null : Number(c.value);

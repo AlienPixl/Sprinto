@@ -253,6 +253,8 @@ function renderAdminPanel({
   onCreateRoomCategory = vi.fn().mockResolvedValue(undefined),
   onUpdateRoomCategory = vi.fn().mockResolvedValue(undefined),
   onDeleteRoomCategory = vi.fn().mockResolvedValue(undefined),
+  onFetchJiraStatuses = vi.fn().mockResolvedValue([]),
+  onFetchJiraLabels = vi.fn().mockResolvedValue([]),
   user = adminUser,
 }: {
   currentOverview?: AdminOverview;
@@ -261,6 +263,8 @@ function renderAdminPanel({
   onCreateRoomCategory?: (name: string) => Promise<void>;
   onUpdateRoomCategory?: (categoryId: string, name: string) => Promise<void>;
   onDeleteRoomCategory?: (categoryId: string) => Promise<void>;
+  onFetchJiraStatuses?: () => Promise<{ id: string; name: string }[]>;
+  onFetchJiraLabels?: () => Promise<string[]>;
   user?: User;
 } = {}) {
   return render(
@@ -294,8 +298,8 @@ function renderAdminPanel({
       onCreateRoomCategory={onCreateRoomCategory}
       onUpdateRoomCategory={onUpdateRoomCategory}
       onDeleteRoomCategory={onDeleteRoomCategory}
-      onFetchJiraStatuses={vi.fn().mockResolvedValue([])}
-      onFetchJiraLabels={vi.fn().mockResolvedValue([])}
+      onFetchJiraStatuses={onFetchJiraStatuses}
+      onFetchJiraLabels={onFetchJiraLabels}
     />,
   );
 }
@@ -316,6 +320,58 @@ describe("AdminPanel", () => {
     expect(screen.getByText("Enable local accounts")).toBeTruthy();
     expect(screen.getByText("Enable Microsoft Active Directory")).toBeTruthy();
     expect(screen.getByText("Enable Microsoft Entra")).toBeTruthy();
+  });
+
+  it("filters the Jira status picker as the admin types a search term", async () => {
+    const onFetchJiraStatuses = vi.fn().mockResolvedValue([
+      { id: "1", name: "To Do" },
+      { id: "2", name: "In Progress" },
+      { id: "3", name: "Done" },
+    ]);
+    renderAdminPanel({
+      currentOverview: {
+        ...overview,
+        settings: {
+          ...overview.settings,
+          integrations: {
+            ...overview.settings.integrations,
+            jira: {
+              ...overview.settings.integrations.jira,
+              defaultImportFilters: {
+                conditions: [{ field: "status", operator: "IN", value: [] }],
+                connectors: [],
+              },
+            },
+          },
+        },
+      },
+      onFetchJiraStatuses,
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Integrations" }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Jira Cloud/ }));
+    });
+
+    await waitFor(() => expect(onFetchJiraStatuses).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByRole("button", { name: /pick statuses/ }));
+
+    expect(screen.getByText("In Progress")).toBeTruthy();
+    expect(screen.getByText("Done")).toBeTruthy();
+
+    fireEvent.change(screen.getByPlaceholderText("Search statuses…"), { target: { value: "prog" } });
+
+    expect(screen.getByText("In Progress")).toBeTruthy();
+    expect(screen.queryByText("Done")).toBeNull();
+    expect(screen.queryByText("To Do")).toBeNull();
+    expect(screen.queryByText("No matching statuses")).toBeNull();
+
+    fireEvent.change(screen.getByPlaceholderText("Search statuses…"), { target: { value: "zzz" } });
+
+    expect(screen.getByText("No matching statuses")).toBeTruthy();
   });
 
   it("blocks saving authentication settings when both providers are disabled", async () => {

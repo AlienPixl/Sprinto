@@ -657,10 +657,12 @@ export function AdminPanel({
   const [jiraSettingsOpen, setJiraSettingsOpen] = useState(false);
   const [jiraAdminStatuses, setJiraAdminStatuses] = useState<JiraStatus[]>([]);
   const [jiraAdminStatusPickerIndex, setJiraAdminStatusPickerIndex] = useState(-1);
+  const [jiraAdminStatusSearch, setJiraAdminStatusSearch] = useState("");
   const jiraAdminStatusPickerRef = useRef<HTMLDivElement | null>(null);
   const [jiraAdminLabels, setJiraAdminLabels] = useState<string[]>([]);
   const [jiraAdminLabelsError, setJiraAdminLabelsError] = useState<string | null>(null);
   const [jiraAdminLabelPickerIndex, setJiraAdminLabelPickerIndex] = useState(-1);
+  const [jiraAdminLabelSearch, setJiraAdminLabelSearch] = useState("");
   const jiraAdminLabelPickerRef = useRef<HTMLDivElement | null>(null);
   const [roomCategoriesOpen, setRoomCategoriesOpen] = useState(false);
   const [roomGeneralOpen, setRoomGeneralOpen] = useState(false);
@@ -2766,17 +2768,35 @@ export function AdminPanel({
                                     <button
                                       className={`jira-filter-status-trigger${isOpen ? " is-open" : ""}`}
                                       type="button"
-                                      onClick={() => setJiraAdminStatusPickerIndex(isOpen ? -1 : index)}
+                                      onClick={() => {
+                                        setJiraAdminStatusPickerIndex(isOpen ? -1 : index);
+                                        setJiraAdminStatusSearch("");
+                                      }}
                                     >
                                       <span className="jira-filter-status-trigger__label">{label}</span>
                                       <span className="jira-filter-status-trigger__caret" aria-hidden="true">{isOpen ? "▴" : "▾"}</span>
                                     </button>
-                                    {isOpen && (
+                                    {isOpen && (() => {
+                                      const term = jiraAdminStatusSearch.trim().toLowerCase();
+                                      const visibleStatuses = term
+                                        ? jiraAdminStatuses.filter((s) => s.name.toLowerCase().includes(term))
+                                        : jiraAdminStatuses;
+                                      return (
                                       <div className="jira-filter-status-dropdown">
-                                        {jiraAdminStatuses.length === 0 && (
+                                        <input
+                                          className="jira-filter-status-search"
+                                          type="text"
+                                          autoFocus
+                                          placeholder="Search statuses…"
+                                          value={jiraAdminStatusSearch}
+                                          onChange={(event) => setJiraAdminStatusSearch(event.target.value)}
+                                        />
+                                        {jiraAdminStatuses.length === 0 ? (
                                           <span className="jira-filter-status-empty">No statuses loaded</span>
-                                        )}
-                                        {jiraAdminStatuses.map((s) => {
+                                        ) : visibleStatuses.length === 0 ? (
+                                          <span className="jira-filter-status-empty">No matching statuses</span>
+                                        ) : null}
+                                        {visibleStatuses.map((s) => {
                                           const checked = selectedValues.includes(s.id);
                                           return (
                                             <button
@@ -2797,7 +2817,8 @@ export function AdminPanel({
                                           );
                                         })}
                                       </div>
-                                    )}
+                                      );
+                                    })()}
                                   </div>
                                 );
                               })()}
@@ -2819,20 +2840,36 @@ export function AdminPanel({
                                       type="button"
                                       onClick={() => {
                                         setJiraAdminLabelPickerIndex(isOpen ? -1 : index);
+                                        setJiraAdminLabelSearch("");
                                         if (!isOpen) void loadJiraAdminLabels();
                                       }}
                                     >
                                       <span className="jira-filter-status-trigger__label">{label}</span>
                                       <span className="jira-filter-status-trigger__caret" aria-hidden="true">{isOpen ? "▴" : "▾"}</span>
                                     </button>
-                                    {isOpen && (
+                                    {isOpen && (() => {
+                                      const term = jiraAdminLabelSearch.trim().toLowerCase();
+                                      const visibleLabels = term
+                                        ? jiraAdminLabels.filter((l) => l.toLowerCase().includes(term))
+                                        : jiraAdminLabels;
+                                      return (
                                       <div className="jira-filter-status-dropdown">
+                                        <input
+                                          className="jira-filter-status-search"
+                                          type="text"
+                                          autoFocus
+                                          placeholder="Search labels…"
+                                          value={jiraAdminLabelSearch}
+                                          onChange={(event) => setJiraAdminLabelSearch(event.target.value)}
+                                        />
                                         {jiraAdminLabelsError ? (
                                           <span className="jira-filter-status-empty jira-filter-status-empty--error">Failed to load labels from Jira: {jiraAdminLabelsError}</span>
                                         ) : jiraAdminLabels.length === 0 ? (
                                           <span className="jira-filter-status-empty">No labels found in Jira</span>
+                                        ) : visibleLabels.length === 0 ? (
+                                          <span className="jira-filter-status-empty">No matching labels</span>
                                         ) : null}
-                                        {jiraAdminLabels.map((l) => {
+                                        {visibleLabels.map((l) => {
                                           const checked = selectedValues.includes(l);
                                           return (
                                             <button
@@ -2853,7 +2890,8 @@ export function AdminPanel({
                                           );
                                         })}
                                       </div>
-                                    )}
+                                      );
+                                    })()}
                                   </div>
                                 );
                               })()}

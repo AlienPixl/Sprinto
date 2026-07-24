@@ -4,6 +4,7 @@ import {
   capabilitiesFor,
   compareReleaseVersions,
   computeStats,
+  normalizeJiraFilterConditions,
   resolveAuthProviderSettings,
   validatePassword,
 } from "./store.js";
@@ -237,5 +238,54 @@ describe("resolveAuthProviderSettings", () => {
   it("explicit settings override legacy ssoMode", () => {
     const settings = resolveAuthProviderSettings({ ssoMode: "Active Directory", localAuthEnabled: true });
     expect(settings.localAuthEnabled).toBe(true);
+  });
+});
+
+describe("normalizeJiraFilterConditions", () => {
+  it("preserves a labels condition with its string values", () => {
+    const conditions = normalizeJiraFilterConditions([
+      { field: "labels", operator: "IN", value: ["frontend", "urgent"] },
+    ]);
+    expect(conditions).toEqual([
+      { field: "labels", operator: "IN", value: ["frontend", "urgent"] },
+    ]);
+  });
+
+  it("keeps a NOT IN labels condition and coerces values to strings", () => {
+    const conditions = normalizeJiraFilterConditions([
+      { field: "labels", operator: "NOT IN", value: ["skip", 42] },
+    ]);
+    expect(conditions).toEqual([
+      { field: "labels", operator: "NOT IN", value: ["skip", "42"] },
+    ]);
+  });
+
+  it("preserves a status condition alongside a labels condition", () => {
+    const conditions = normalizeJiraFilterConditions([
+      { field: "status", operator: "IN", value: ["10001"] },
+      { field: "labels", operator: "IN", value: ["backend"] },
+    ]);
+    expect(conditions).toEqual([
+      { field: "status", operator: "IN", value: ["10001"] },
+      { field: "labels", operator: "IN", value: ["backend"] },
+    ]);
+  });
+
+  it("normalizes a missing labels value to an empty array", () => {
+    const conditions = normalizeJiraFilterConditions([
+      { field: "labels", operator: "IN", value: null },
+    ]);
+    expect(conditions).toEqual([
+      { field: "labels", operator: "IN", value: [] },
+    ]);
+  });
+
+  it("drops conditions with an unknown field", () => {
+    const conditions = normalizeJiraFilterConditions([
+      { field: "bogus", operator: "IN", value: ["x"] },
+    ]);
+    expect(conditions).toEqual([
+      { field: "storyPoints", operator: "IS EMPTY", value: null },
+    ]);
   });
 });

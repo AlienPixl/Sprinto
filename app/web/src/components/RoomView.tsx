@@ -248,8 +248,10 @@ export function RoomView({
   const timelineTrackRef = useRef<HTMLDivElement | null>(null);
   const draggingTimelineRef = useRef(false);
   const [jiraStatusPickerIndex, setJiraStatusPickerIndex] = useState(-1);
+  const [jiraStatusSearch, setJiraStatusSearch] = useState("");
   const jiraStatusPickerRef = useRef<HTMLDivElement | null>(null);
   const [jiraLabelPickerIndex, setJiraLabelPickerIndex] = useState(-1);
+  const [jiraLabelSearch, setJiraLabelSearch] = useState("");
   const jiraLabelPickerRef = useRef<HTMLDivElement | null>(null);
   const roomSettingsRef = useRef<HTMLDivElement | null>(null);
   const roomSettingsButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -2094,17 +2096,35 @@ export function RoomView({
                                       <button
                                         className={`jira-filter-status-trigger${isOpen ? " is-open" : ""}`}
                                         type="button"
-                                        onClick={() => setJiraStatusPickerIndex(isOpen ? -1 : index)}
+                                        onClick={() => {
+                                          setJiraStatusPickerIndex(isOpen ? -1 : index);
+                                          setJiraStatusSearch("");
+                                        }}
                                       >
                                         <span className="jira-filter-status-trigger__label">{label}</span>
                                         <span className="jira-filter-status-trigger__caret" aria-hidden="true">{isOpen ? "▴" : "▾"}</span>
                                       </button>
-                                      {isOpen && (
+                                      {isOpen && (() => {
+                                        const term = jiraStatusSearch.trim().toLowerCase();
+                                        const visibleStatuses = term
+                                          ? jiraStatuses.filter((s) => s.name.toLowerCase().includes(term))
+                                          : jiraStatuses;
+                                        return (
                                         <div className="jira-filter-status-dropdown">
-                                          {jiraStatuses.length === 0 && (
+                                          <input
+                                            className="jira-filter-status-search"
+                                            type="text"
+                                            autoFocus
+                                            placeholder="Search statuses…"
+                                            value={jiraStatusSearch}
+                                            onChange={(event) => setJiraStatusSearch(event.target.value)}
+                                          />
+                                          {jiraStatuses.length === 0 ? (
                                             <span className="jira-filter-status-empty">No statuses loaded</span>
-                                          )}
-                                          {jiraStatuses.map((s) => {
+                                          ) : visibleStatuses.length === 0 ? (
+                                            <span className="jira-filter-status-empty">No matching statuses</span>
+                                          ) : null}
+                                          {visibleStatuses.map((s) => {
                                             const checked = selectedValues.includes(s.id);
                                             return (
                                               <button
@@ -2127,7 +2147,8 @@ export function RoomView({
                                             );
                                           })}
                                         </div>
-                                      )}
+                                        );
+                                      })()}
                                     </div>
                                   );
                                 })()}
@@ -2149,20 +2170,36 @@ export function RoomView({
                                         type="button"
                                         onClick={() => {
                                           setJiraLabelPickerIndex(isOpen ? -1 : index);
+                                          setJiraLabelSearch("");
                                           if (!isOpen) void loadJiraLabels();
                                         }}
                                       >
                                         <span className="jira-filter-status-trigger__label">{label}</span>
                                         <span className="jira-filter-status-trigger__caret" aria-hidden="true">{isOpen ? "▴" : "▾"}</span>
                                       </button>
-                                      {isOpen && (
+                                      {isOpen && (() => {
+                                        const term = jiraLabelSearch.trim().toLowerCase();
+                                        const visibleLabels = term
+                                          ? jiraLabels.filter((l) => l.toLowerCase().includes(term))
+                                          : jiraLabels;
+                                        return (
                                         <div className="jira-filter-status-dropdown">
+                                          <input
+                                            className="jira-filter-status-search"
+                                            type="text"
+                                            autoFocus
+                                            placeholder="Search labels…"
+                                            value={jiraLabelSearch}
+                                            onChange={(event) => setJiraLabelSearch(event.target.value)}
+                                          />
                                           {jiraLabelsError ? (
                                             <span className="jira-filter-status-empty jira-filter-status-empty--error">Failed to load labels from Jira: {jiraLabelsError}</span>
                                           ) : jiraLabels.length === 0 ? (
                                             <span className="jira-filter-status-empty">No labels found in Jira</span>
+                                          ) : visibleLabels.length === 0 ? (
+                                            <span className="jira-filter-status-empty">No matching labels</span>
                                           ) : null}
-                                          {jiraLabels.map((l) => {
+                                          {visibleLabels.map((l) => {
                                             const checked = selectedValues.includes(l);
                                             return (
                                               <button
@@ -2185,7 +2222,8 @@ export function RoomView({
                                             );
                                           })}
                                         </div>
-                                      )}
+                                        );
+                                      })()}
                                     </div>
                                   );
                                 })()}
