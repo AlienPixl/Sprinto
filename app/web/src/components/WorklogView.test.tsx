@@ -47,7 +47,7 @@ describe("WorklogView", () => {
       />
     );
 
-    await waitFor(() => expect(onLoadUsers).toHaveBeenCalled());
+    expect(onLoadUsers).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "View report" }));
 
     await waitFor(() => expect(onLoadReport).toHaveBeenCalledTimes(1));
@@ -75,7 +75,7 @@ describe("WorklogView", () => {
         onLoadUsers={onLoadUsers}
       />
     );
-    await waitFor(() => expect(onLoadUsers).toHaveBeenCalled());
+    expect(onLoadUsers).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "View report" }));
 
     expect(await screen.findByText("Boom")).toBeTruthy();
@@ -102,9 +102,11 @@ describe("WorklogView", () => {
       />
     );
 
-    await waitFor(() => expect(onLoadUsers).toHaveBeenCalled());
-    fireEvent.change(screen.getByLabelText("Issue"), { target: { value: "Mediox" } });
+    const issueInput = screen.getByPlaceholderText("PROJ-123 nebo Mediox");
+    fireEvent.change(issueInput, { target: { value: "Mediox" } });
+    expect(onLoadIssues).not.toHaveBeenCalled();
 
+    fireEvent.keyDown(issueInput, { key: "Enter" });
     await waitFor(() => expect(onLoadIssues).toHaveBeenCalledWith("Mediox"));
     fireEvent.mouseDown(await screen.findByRole("button", { name: /MED.*Mediox.*Project/i }));
     fireEvent.click(screen.getByRole("button", { name: "View report" }));
@@ -143,8 +145,11 @@ describe("WorklogView", () => {
       />
     );
 
-    fireEvent.change(screen.getByPlaceholderText("Find user or group"), { target: { value: "Finance" } });
+    const userInput = screen.getByPlaceholderText("Find user or group");
+    fireEvent.change(userInput, { target: { value: "Finance" } });
+    expect(onLoadUsers).not.toHaveBeenCalled();
 
+    fireEvent.keyDown(userInput, { key: "Enter" });
     await waitFor(() => expect(onLoadUsers).toHaveBeenCalledWith("Finance"));
     fireEvent.mouseDown(await screen.findByRole("button", { name: /Finance Leads.*Jira group/i }));
     fireEvent.click(screen.getByRole("button", { name: "View report" }));
@@ -173,6 +178,7 @@ describe("WorklogView", () => {
 
     const input = screen.getByPlaceholderText("Find user or group") as HTMLInputElement;
     fireEvent.change(input, { target: { value: "Fin" } });
+    fireEvent.keyDown(input, { key: "Enter" });
 
     await waitFor(() => expect(onLoadUsers).toHaveBeenCalledWith("Fin"));
     fireEvent.blur(input);

@@ -1,5 +1,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Issue, IssueEvent, IssueQueueItem, JiraAssignableUser, JiraBoard, JiraFilterConnector, JiraFilterOperator, JiraImportFilters, JiraImportPreviewIssue, JiraImportSyncResult, JiraIntegrationSettings, JiraSprint, JiraStatus, Participant, RoomCategory, RoomSnapshot, Vote } from "../lib/types";
+import JiraFilterEditor from "./JiraFilterEditor";
+import { LazyPicker } from "./LazyPicker";
+import { Issue, IssueEvent, IssueQueueItem, JiraAssignableUser, JiraBoard, JiraImportFilters, JiraImportPreviewIssue, JiraImportSyncResult, JiraIntegrationSettings, JiraSprint, JiraStatus, Participant, RoomCategory, RoomSnapshot, Vote } from "../lib/types";
 
 type HighlightMode = "none" | "most-frequent" | "highest";
 type JiraSuggestionStrategy = "highest" | "most-frequent" | "median" | "average";
@@ -123,6 +125,10 @@ const TIMELINE_MAX = 112;
 const TIMELINE_START = 12;
 const TIMELINE_END = 88;
 const TIMELINE_START_PRESENCE_GRACE_MS = 250;
+// Preview and import are the expensive Jira calls. A short cooldown stops double-clicks and
+// impatient re-clicks from burning through the API budget while filters are being tweaked.
+const JIRA_PREVIEW_COOLDOWN_SECONDS = 5;
+const JIRA_IMPORT_COOLDOWN_SECONDS = 3;
 const HIGHLIGHT_OPTIONS: Array<{ value: HighlightMode; label: string }> = [
   { value: "none", label: "No highlight" },
   { value: "most-frequent", label: "Most frequented card" },
@@ -201,11 +207,25 @@ export function RoomView({
   const [jiraBoards, setJiraBoards] = useState<JiraBoard[]>([]);
   const [jiraSprints, setJiraSprints] = useState<JiraSprint[]>([]);
   const [jiraStatuses, setJiraStatuses] = useState<JiraStatus[]>([]);
+  const [jiraStatusesLoading, setJiraStatusesLoading] = useState(false);
+  const [jiraStatusesError, setJiraStatusesError] = useState<string | null>(null);
+  const [jiraStatusesLoaded, setJiraStatusesLoaded] = useState(false);
   const [jiraLabels, setJiraLabels] = useState<string[]>([]);
+  const [jiraLabelsLoading, setJiraLabelsLoading] = useState(false);
   const [jiraLabelsError, setJiraLabelsError] = useState<string | null>(null);
+  const [jiraLabelsLoaded, setJiraLabelsLoaded] = useState(false);
   const [jiraPreviewIssues, setJiraPreviewIssues] = useState<JiraImportPreviewIssue[]>([]);
   const [jiraBoardId, setJiraBoardId] = useState("");
   const [jiraSprintId, setJiraSprintId] = useState("");
+  const [jiraBoardsLoading, setJiraBoardsLoading] = useState(false);
+  const [jiraBoardsError, setJiraBoardsError] = useState<string | null>(null);
+  const [jiraBoardsLoaded, setJiraBoardsLoaded] = useState(false);
+  const [jiraSprintsLoading, setJiraSprintsLoading] = useState(false);
+  const [jiraSprintsError, setJiraSprintsError] = useState<string | null>(null);
+  // Board id the loaded sprint list belongs to — reopening the same board reuses it.
+  const [jiraSprintsBoardId, setJiraSprintsBoardId] = useState("");
+  const [jiraPreviewCooldown, setJiraPreviewCooldown] = useState(0);
+  const [jiraImportCooldown, setJiraImportCooldown] = useState(0);
   const [jiraLoading, setJiraLoading] = useState(false);
   const [jiraMessage, setJiraMessage] = useState("");
   const [jiraMessageTone, setJiraMessageTone] = useState<"info" | "success" | "warning" | "error">("info");
@@ -247,12 +267,6 @@ export function RoomView({
   const leaveTimersRef = useRef<number[]>([]);
   const timelineTrackRef = useRef<HTMLDivElement | null>(null);
   const draggingTimelineRef = useRef(false);
-  const [jiraStatusPickerIndex, setJiraStatusPickerIndex] = useState(-1);
-  const [jiraStatusSearch, setJiraStatusSearch] = useState("");
-  const jiraStatusPickerRef = useRef<HTMLDivElement | null>(null);
-  const [jiraLabelPickerIndex, setJiraLabelPickerIndex] = useState(-1);
-  const [jiraLabelSearch, setJiraLabelSearch] = useState("");
-  const jiraLabelPickerRef = useRef<HTMLDivElement | null>(null);
   const roomSettingsRef = useRef<HTMLDivElement | null>(null);
   const roomSettingsButtonRef = useRef<HTMLButtonElement | null>(null);
   const prevIssueIdRef = useRef<string>(snapshot.room.currentIssue.id);
@@ -512,17 +526,11 @@ export function RoomView({
       if (jiraActionAssigneeOpen && jiraAssigneePickerRef.current && !jiraAssigneePickerRef.current.contains(event.target as Node)) {
         setJiraActionAssigneeOpen(false);
       }
-      if (jiraStatusPickerIndex >= 0 && jiraStatusPickerRef.current && !jiraStatusPickerRef.current.contains(event.target as Node)) {
-        setJiraStatusPickerIndex(-1);
-      }
-      if (jiraLabelPickerIndex >= 0 && jiraLabelPickerRef.current && !jiraLabelPickerRef.current.contains(event.target as Node)) {
-        setJiraLabelPickerIndex(-1);
-      }
     }
 
     window.addEventListener("pointerdown", handlePointerDown);
     return () => window.removeEventListener("pointerdown", handlePointerDown);
-  }, [jiraActionAssigneeOpen, jiraStatusPickerIndex, jiraLabelPickerIndex]);
+  }, [jiraActionAssigneeOpen]);
 
   const displayIssue: Issue = selectedHistoryIssue ?? snapshot.room.currentIssue;
   const displayVotes = historyFrame?.visibleVotes ?? displayIssue.votes;
@@ -619,6 +627,17 @@ export function RoomView({
     [jiraBoardId, jiraBoards]
   );
   const jiraSprintRequired = Boolean(jiraBoardId) && selectedJiraBoard?.type !== "kanban";
+
+  useEffect(() => {
+    if (jiraPreviewCooldown <= 0 && jiraImportCooldown <= 0) {
+      return undefined;
+    }
+    const timer = window.setInterval(() => {
+      setJiraPreviewCooldown((current) => (current > 0 ? current - 1 : 0));
+      setJiraImportCooldown((current) => (current > 0 ? current - 1 : 0));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [jiraImportCooldown, jiraPreviewCooldown]);
   const jiraImportScopeSummary = useMemo(
     () => summarizeJiraImportScope(snapshot, jiraBoardId, jiraSprintRequired ? jiraSprintId : ""),
     [jiraBoardId, jiraSprintId, jiraSprintRequired, snapshot]
@@ -1020,20 +1039,85 @@ export function RoomView({
     }
   }
 
-  function loadJiraLabels() {
+  // Every Jira list below loads on first open of its own picker, never on modal open.
+  // Opening the import dialog must not cost a single Jira request.
+  async function loadJiraLabels(force = false) {
+    if (jiraLabelsLoading || (jiraLabelsLoaded && !force)) {
+      return;
+    }
+    setJiraLabelsLoading(true);
     setJiraLabelsError(null);
-    return onFetchJiraLabels()
-      .then((labels) => {
-        setJiraLabels(labels);
-        setJiraLabelsError(null);
-      })
-      .catch((error) => {
-        setJiraLabels([]);
-        setJiraLabelsError(error instanceof Error ? error.message : "Failed to load Jira labels.");
-      });
+    try {
+      const labels = await onFetchJiraLabels();
+      setJiraLabels(labels);
+      setJiraLabelsLoaded(true);
+    } catch (error) {
+      setJiraLabels([]);
+      setJiraLabelsError(error instanceof Error ? error.message : "Failed to load Jira labels.");
+    } finally {
+      setJiraLabelsLoading(false);
+    }
   }
 
-  async function openJiraModal() {
+  async function loadJiraStatuses(force = false) {
+    if (jiraStatusesLoading || (jiraStatusesLoaded && !force)) {
+      return;
+    }
+    setJiraStatusesLoading(true);
+    setJiraStatusesError(null);
+    try {
+      const statuses = await onFetchJiraStatuses();
+      setJiraStatuses(statuses);
+      setJiraStatusesLoaded(true);
+    } catch (error) {
+      setJiraStatuses([]);
+      setJiraStatusesError(error instanceof Error ? error.message : "Failed to load Jira statuses.");
+    } finally {
+      setJiraStatusesLoading(false);
+    }
+  }
+
+  async function loadJiraBoards(force = false) {
+    if (jiraBoardsLoading || (jiraBoardsLoaded && !force)) {
+      return;
+    }
+    setJiraBoardsLoading(true);
+    setJiraBoardsError(null);
+    try {
+      const boards = await onFetchJiraBoards();
+      setJiraBoards(boards);
+      setJiraBoardsLoaded(true);
+    } catch (error) {
+      setJiraBoards([]);
+      setJiraBoardsError(error instanceof Error ? error.message : "Failed to load Jira boards.");
+    } finally {
+      setJiraBoardsLoading(false);
+    }
+  }
+
+  async function loadJiraSprints(boardId: string, force = false) {
+    if (!boardId || jiraSprintsLoading) {
+      return;
+    }
+    if (jiraSprintsBoardId === boardId && !force) {
+      return;
+    }
+    setJiraSprintsLoading(true);
+    setJiraSprintsError(null);
+    try {
+      const sprints = await onFetchJiraSprints(boardId);
+      setJiraSprints(sprints);
+      setJiraSprintsBoardId(boardId);
+    } catch (error) {
+      setJiraSprints([]);
+      setJiraSprintsBoardId("");
+      setJiraSprintsError(error instanceof Error ? error.message : "Failed to load Jira sprints.");
+    } finally {
+      setJiraSprintsLoading(false);
+    }
+  }
+
+  function openJiraModal() {
     if (jiraOpen) {
       closeJiraModal();
       return;
@@ -1043,68 +1127,30 @@ export function RoomView({
     setJiraReimportOpen(false);
     setJiraReimportCompletedChoice(null);
     setJiraPreviewOpen(false);
-    setJiraLoading(true);
     setJiraMessage("");
     setJiraMessageTone("info");
-    try {
-      const [boards, statuses] = await Promise.all([onFetchJiraBoards(), onFetchJiraStatuses()]);
-      setJiraBoards(boards);
-      setJiraStatuses(statuses);
-      void loadJiraLabels();
-      const nextBoardId = jiraBoardId || boards[0]?.id || "";
-      setJiraBoardId(nextBoardId);
-      if (nextBoardId) {
-        const nextBoard = boards.find((board) => board.id === nextBoardId) ?? null;
-        if (nextBoard?.type === "kanban") {
-          setJiraSprints([]);
-          setJiraSprintId("");
-        } else {
-          const sprints = await onFetchJiraSprints(nextBoardId);
-          setJiraSprints(sprints);
-          setJiraSprintId((current) => current || sprints[0]?.id || "");
-        }
-      }
-    } catch (error) {
-      setJiraMessage(error instanceof Error ? error.message : "Failed to load Jira options.");
-      setJiraMessageTone("error");
-    } finally {
-      setJiraLoading(false);
-    }
   }
 
-  async function handleJiraBoardChange(boardId: string) {
+  function handleJiraBoardChange(boardId: string) {
+    if (boardId === jiraBoardId) {
+      return;
+    }
     setJiraBoardId(boardId);
     setJiraSprintId("");
+    setJiraSprints([]);
+    setJiraSprintsBoardId("");
+    setJiraSprintsError(null);
     setJiraReimportOpen(false);
     setJiraReimportCompletedChoice(null);
     setJiraPreviewIssues([]);
     setJiraPreviewOpen(false);
-    if (!boardId) {
-      setJiraSprints([]);
-      return;
-    }
-    const nextBoard = jiraBoards.find((board) => board.id === boardId) ?? null;
-    if (nextBoard?.type === "kanban") {
-      setJiraSprints([]);
-      return;
-    }
-    setJiraLoading(true);
-    try {
-      const sprints = await onFetchJiraSprints(boardId);
-      setJiraSprints(sprints);
-      setJiraSprintId(sprints[0]?.id || "");
-    } catch (error) {
-      setJiraMessage(error instanceof Error ? error.message : "Failed to load Jira sprints.");
-      setJiraMessageTone("error");
-    } finally {
-      setJiraLoading(false);
-    }
   }
 
   async function handlePreviewJiraImport() {
-    if (!jiraBoardId || (jiraSprintRequired && !jiraSprintId)) {
+    if (!jiraBoardId || (jiraSprintRequired && !jiraSprintId) || jiraPreviewCooldown > 0) {
       return;
     }
+    setJiraPreviewCooldown(JIRA_PREVIEW_COOLDOWN_SECONDS);
     setJiraLoading(true);
     setJiraMessage("");
     setJiraMessageTone("info");
@@ -1127,6 +1173,9 @@ export function RoomView({
   }
 
   async function handleImportFromJira() {
+    if (jiraImportCooldown > 0) {
+      return;
+    }
     if (jiraImportScopeSummary.hasExistingImport) {
       setJiraReimportCompletedChoice(null);
       setJiraReimportOpen(true);
@@ -1137,9 +1186,10 @@ export function RoomView({
   }
 
   async function runJiraImport(reimportCompletedIssues: boolean) {
-    if (!jiraBoardId || (jiraSprintRequired && !jiraSprintId)) {
+    if (!jiraBoardId || (jiraSprintRequired && !jiraSprintId) || jiraImportCooldown > 0) {
       return;
     }
+    setJiraImportCooldown(JIRA_IMPORT_COOLDOWN_SECONDS);
     setJiraLoading(true);
     setJiraMessage("");
     setJiraMessageTone("info");
@@ -1986,22 +2036,40 @@ export function RoomView({
                       <div className="jira-import-grid">
                         <label>
                           <span>Board</span>
-                          <select value={jiraBoardId} onChange={(event) => void handleJiraBoardChange(event.target.value)}>
-                            <option value="">Select board</option>
-                            {jiraBoards.map((board) => (
-                              <option key={board.id} value={board.id}>{formatJiraBoardLabel(board)}</option>
-                            ))}
-                          </select>
+                          <LazyPicker
+                            ariaLabel="Board"
+                            emptyText="No boards available"
+                            error={jiraBoardsError || undefined}
+                            loading={jiraBoardsLoading}
+                            loadingText="Loading boards…"
+                            onOpen={() => void loadJiraBoards()}
+                            onRetry={() => void loadJiraBoards(true)}
+                            onSelect={handleJiraBoardChange}
+                            options={jiraBoards.map((board) => ({ id: board.id, name: formatJiraBoardLabel(board) }))}
+                            placeholder="Select board"
+                            searchPlaceholder="Search boards…"
+                            value={jiraBoardId}
+                          />
                         </label>
                         {selectedJiraBoard?.type !== "kanban" ? (
                           <label>
                             <span>Sprint</span>
-                            <select value={jiraSprintId} onChange={(event) => setJiraSprintId(event.target.value)}>
-                              <option value="">Select sprint</option>
-                              {jiraSprints.map((sprint) => (
-                                <option key={sprint.id} value={sprint.id}>{sprint.name} ({sprint.state})</option>
-                              ))}
-                            </select>
+                            <LazyPicker
+                              ariaLabel="Sprint"
+                              disabled={!jiraBoardId}
+                              disabledText="Select a board first"
+                              emptyText="No active or future sprints"
+                              error={jiraSprintsError || undefined}
+                              loading={jiraSprintsLoading}
+                              loadingText="Loading sprints…"
+                              onOpen={() => void loadJiraSprints(jiraBoardId)}
+                              onRetry={() => void loadJiraSprints(jiraBoardId, true)}
+                              onSelect={setJiraSprintId}
+                              options={jiraSprints.map((sprint) => ({ id: sprint.id, name: sprint.name, hint: sprint.state }))}
+                              placeholder="Select sprint"
+                              searchPlaceholder="Search sprints…"
+                              value={jiraSprintId}
+                            />
                           </label>
                         ) : (
                           <label className="jira-import-placeholder">
@@ -2014,268 +2082,18 @@ export function RoomView({
 
                       <div className="jira-import-section jira-import-section--compact">
                         <p className="jira-import-section__title">Import rules</p>
-                        <div className="jira-filter-conditions">
-                          {jiraFilters.conditions.map((condition, index) => (
-                            <div key={index}>
-                              {index > 0 && (
-                                <div className="jira-filter-connector">
-                                  <select
-                                    value={jiraFilters.connectors[index - 1] ?? "AND"}
-                                    onChange={(event) =>
-                                      setJiraFilters((current) => {
-                                        const connectors = [...current.connectors] as JiraFilterConnector[];
-                                        connectors[index - 1] = event.target.value as JiraFilterConnector;
-                                        return { ...current, connectors };
-                                      })
-                                    }
-                                  >
-                                    <option value="AND">AND</option>
-                                    <option value="OR">OR</option>
-                                  </select>
-                                </div>
-                              )}
-                              <div className="jira-filter-row">
-                                <select
-                                  value={condition.field}
-                                  onChange={(event) => {
-                                    const newField = event.target.value as "storyPoints" | "originalEstimate" | "status" | "labels";
-                                    setJiraFilters((current) => {
-                                      const conditions = [...current.conditions];
-                                      if (newField === "status" || newField === "labels") {
-                                        conditions[index] = { field: newField, operator: "IN", value: [] };
-                                      } else {
-                                        conditions[index] = { field: newField, operator: "IS EMPTY", value: null };
-                                      }
-                                      return { ...current, conditions };
-                                    });
-                                  }}
-                                >
-                                  <option value="storyPoints">Story Points</option>
-                                  <option value="originalEstimate">Original Estimate</option>
-                                  <option value="status">Status</option>
-                                  <option value="labels">Labels</option>
-                                </select>
-                                <select
-                                  value={condition.operator}
-                                  onChange={(event) => {
-                                    const newOp = event.target.value as JiraFilterOperator;
-                                    setJiraFilters((current) => {
-                                      const conditions = [...current.conditions];
-                                      conditions[index] = { ...conditions[index], operator: newOp, value: (condition.field === "status" || condition.field === "labels") ? [] : null };
-                                      return { ...current, conditions };
-                                    });
-                                  }}
-                                >
-                                  {condition.field === "status" || condition.field === "labels" ? (
-                                    <>
-                                      <option value="IN">IN</option>
-                                      <option value="NOT IN">NOT IN</option>
-                                    </>
-                                  ) : (
-                                    <>
-                                      <option value="IS EMPTY">IS EMPTY</option>
-                                      <option value="IS NOT EMPTY">IS NOT EMPTY</option>
-                                      <option value="=">=</option>
-                                      <option value="!=">!=</option>
-                                    </>
-                                  )}
-                                </select>
-                                {condition.field === "status" && (() => {
-                                  const isOpen = jiraStatusPickerIndex === index;
-                                  const selectedValues = Array.isArray(condition.value) ? condition.value as string[] : [];
-                                  const label = selectedValues.length === 0
-                                    ? "— pick statuses —"
-                                    : selectedValues.length === 1
-                                      ? (jiraStatuses.find((s) => s.id === selectedValues[0])?.name ?? selectedValues[0])
-                                      : `${selectedValues.length} statuses`;
-                                  return (
-                                    <div
-                                      className="jira-filter-status-picker"
-                                      ref={isOpen ? jiraStatusPickerRef : null}
-                                    >
-                                      <button
-                                        className={`jira-filter-status-trigger${isOpen ? " is-open" : ""}`}
-                                        type="button"
-                                        onClick={() => {
-                                          setJiraStatusPickerIndex(isOpen ? -1 : index);
-                                          setJiraStatusSearch("");
-                                        }}
-                                      >
-                                        <span className="jira-filter-status-trigger__label">{label}</span>
-                                        <span className="jira-filter-status-trigger__caret" aria-hidden="true">{isOpen ? "▴" : "▾"}</span>
-                                      </button>
-                                      {isOpen && (() => {
-                                        const term = jiraStatusSearch.trim().toLowerCase();
-                                        const visibleStatuses = term
-                                          ? jiraStatuses.filter((s) => s.name.toLowerCase().includes(term))
-                                          : jiraStatuses;
-                                        return (
-                                        <div className="jira-filter-status-dropdown">
-                                          <input
-                                            className="jira-filter-status-search"
-                                            type="text"
-                                            autoFocus
-                                            placeholder="Search statuses…"
-                                            value={jiraStatusSearch}
-                                            onChange={(event) => setJiraStatusSearch(event.target.value)}
-                                          />
-                                          {jiraStatuses.length === 0 ? (
-                                            <span className="jira-filter-status-empty">No statuses loaded</span>
-                                          ) : visibleStatuses.length === 0 ? (
-                                            <span className="jira-filter-status-empty">No matching statuses</span>
-                                          ) : null}
-                                          {visibleStatuses.map((s) => {
-                                            const checked = selectedValues.includes(s.id);
-                                            return (
-                                              <button
-                                                key={s.id}
-                                                className={`jira-filter-status-option${checked ? " is-selected" : ""}`}
-                                                type="button"
-                                                onClick={() => {
-                                                  setJiraFilters((current) => {
-                                                    const conditions = [...current.conditions];
-                                                    const cur = Array.isArray(conditions[index].value) ? conditions[index].value as string[] : [];
-                                                    const next = checked ? cur.filter((v) => v !== s.id) : [...cur, s.id];
-                                                    conditions[index] = { ...conditions[index], value: next };
-                                                    return { ...current, conditions };
-                                                  });
-                                                }}
-                                              >
-                                                <span className="jira-filter-status-option__check" aria-hidden="true">{checked ? "✓" : ""}</span>
-                                                {s.name}
-                                              </button>
-                                            );
-                                          })}
-                                        </div>
-                                        );
-                                      })()}
-                                    </div>
-                                  );
-                                })()}
-                                {condition.field === "labels" && (() => {
-                                  const isOpen = jiraLabelPickerIndex === index;
-                                  const selectedValues = Array.isArray(condition.value) ? condition.value as string[] : [];
-                                  const label = selectedValues.length === 0
-                                    ? "— pick labels —"
-                                    : selectedValues.length === 1
-                                      ? selectedValues[0]
-                                      : `${selectedValues.length} labels`;
-                                  return (
-                                    <div
-                                      className="jira-filter-status-picker"
-                                      ref={isOpen ? jiraLabelPickerRef : null}
-                                    >
-                                      <button
-                                        className={`jira-filter-status-trigger${isOpen ? " is-open" : ""}`}
-                                        type="button"
-                                        onClick={() => {
-                                          setJiraLabelPickerIndex(isOpen ? -1 : index);
-                                          setJiraLabelSearch("");
-                                          if (!isOpen) void loadJiraLabels();
-                                        }}
-                                      >
-                                        <span className="jira-filter-status-trigger__label">{label}</span>
-                                        <span className="jira-filter-status-trigger__caret" aria-hidden="true">{isOpen ? "▴" : "▾"}</span>
-                                      </button>
-                                      {isOpen && (() => {
-                                        const term = jiraLabelSearch.trim().toLowerCase();
-                                        const visibleLabels = term
-                                          ? jiraLabels.filter((l) => l.toLowerCase().includes(term))
-                                          : jiraLabels;
-                                        return (
-                                        <div className="jira-filter-status-dropdown">
-                                          <input
-                                            className="jira-filter-status-search"
-                                            type="text"
-                                            autoFocus
-                                            placeholder="Search labels…"
-                                            value={jiraLabelSearch}
-                                            onChange={(event) => setJiraLabelSearch(event.target.value)}
-                                          />
-                                          {jiraLabelsError ? (
-                                            <span className="jira-filter-status-empty jira-filter-status-empty--error">Failed to load labels from Jira: {jiraLabelsError}</span>
-                                          ) : jiraLabels.length === 0 ? (
-                                            <span className="jira-filter-status-empty">No labels found in Jira</span>
-                                          ) : visibleLabels.length === 0 ? (
-                                            <span className="jira-filter-status-empty">No matching labels</span>
-                                          ) : null}
-                                          {visibleLabels.map((l) => {
-                                            const checked = selectedValues.includes(l);
-                                            return (
-                                              <button
-                                                key={l}
-                                                className={`jira-filter-status-option${checked ? " is-selected" : ""}`}
-                                                type="button"
-                                                onClick={() => {
-                                                  setJiraFilters((current) => {
-                                                    const conditions = [...current.conditions];
-                                                    const cur = Array.isArray(conditions[index].value) ? conditions[index].value as string[] : [];
-                                                    const next = checked ? cur.filter((v) => v !== l) : [...cur, l];
-                                                    conditions[index] = { ...conditions[index], value: next };
-                                                    return { ...current, conditions };
-                                                  });
-                                                }}
-                                              >
-                                                <span className="jira-filter-status-option__check" aria-hidden="true">{checked ? "✓" : ""}</span>
-                                                {l}
-                                              </button>
-                                            );
-                                          })}
-                                        </div>
-                                        );
-                                      })()}
-                                    </div>
-                                  );
-                                })()}
-                                {(condition.operator === "=" || condition.operator === "!=") && (
-                                  <input
-                                    className="jira-filter-value-input"
-                                    type="number"
-                                    min="0"
-                                    value={typeof condition.value === "number" ? condition.value : ""}
-                                    onChange={(event) =>
-                                      setJiraFilters((current) => {
-                                        const conditions = [...current.conditions];
-                                        const val = event.target.value === "" ? null : Number(event.target.value);
-                                        conditions[index] = { ...conditions[index], value: val };
-                                        return { ...current, conditions };
-                                      })
-                                    }
-                                  />
-                                )}
-                                {jiraFilters.conditions.length > 1 && (
-                                  <button
-                                    className="jira-filter-remove"
-                                    type="button"
-                                    onClick={() =>
-                                      setJiraFilters((current) => {
-                                        const conditions = current.conditions.filter((_, i) => i !== index);
-                                        const connectorIndexToRemove = index === 0 ? 0 : index - 1;
-                                        const connectors = current.connectors.filter((_, i) => i !== connectorIndexToRemove);
-                                        return { ...current, conditions, connectors };
-                                      })
-                                    }
-                                  >
-                                    ×
-                                  </button>
-                                )}
-                              </div>
-                            </div>
-                          ))}
-                          <button
-                            className="jira-filter-add"
-                            type="button"
-                            onClick={() =>
-                              setJiraFilters((current) => ({
-                                ...current,
-                                conditions: [...current.conditions, { field: "storyPoints", operator: "IS EMPTY", value: null }],
-                                connectors: [...current.connectors, "AND"],
-                              }))
-                            }
-                          >
-                            + Add condition
-                          </button>
-                        </div>
+                        <JiraFilterEditor
+                          filters={jiraFilters}
+                          onChange={setJiraFilters}
+                          statuses={jiraStatuses}
+                          statusesLoading={jiraStatusesLoading}
+                          statusesError={jiraStatusesError}
+                          onRequestStatuses={() => void loadJiraStatuses()}
+                          labels={jiraLabels}
+                          labelsLoading={jiraLabelsLoading}
+                          labelsError={jiraLabelsError}
+                          onRequestLabels={() => void loadJiraLabels()}
+                        />
                       </div>
 
                       <div className="queue-jira-panel__actions">
@@ -2292,20 +2110,22 @@ export function RoomView({
                           Cancel
                         </button>
                         <button
-                          className="button-center"
-                          disabled={jiraLoading || !jiraBoardId || (jiraSprintRequired && !jiraSprintId)}
+                          className={`button-center${jiraPreviewCooldown > 0 ? " is-cooling-down" : ""}`}
+                          disabled={jiraLoading || jiraPreviewCooldown > 0 || !jiraBoardId || (jiraSprintRequired && !jiraSprintId)}
                           onClick={() => void handlePreviewJiraImport()}
+                          style={jiraPreviewCooldown > 0 ? { ["--cooldown-duration" as string]: `${JIRA_PREVIEW_COOLDOWN_SECONDS}s` } : undefined}
                           type="button"
                         >
-                          {jiraLoading ? "Loading..." : "Preview"}
+                          {jiraLoading ? "Loading..." : jiraPreviewCooldown > 0 ? `Preview (${jiraPreviewCooldown}s)` : "Preview"}
                         </button>
                         <button
-                          className="button-center"
-                          disabled={jiraLoading || !jiraBoardId || (jiraSprintRequired && !jiraSprintId)}
+                          className={`button-center${jiraImportCooldown > 0 ? " is-cooling-down" : ""}`}
+                          disabled={jiraLoading || jiraImportCooldown > 0 || !jiraBoardId || (jiraSprintRequired && !jiraSprintId)}
                           onClick={() => void handleImportFromJira()}
+                          style={jiraImportCooldown > 0 ? { ["--cooldown-duration" as string]: `${JIRA_IMPORT_COOLDOWN_SECONDS}s` } : undefined}
                           type="button"
                         >
-                          Import issues
+                          {jiraImportCooldown > 0 ? `Import issues (${jiraImportCooldown}s)` : "Import issues"}
                         </button>
                       </div>
                     </div>

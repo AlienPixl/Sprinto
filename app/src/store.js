@@ -48,6 +48,7 @@ const defaultJiraImportFilters = {
   connectors: [],
 };
 
+const JIRA_FILTER_MAX_GROUP_DEPTH = 5;
 const JIRA_FILTER_FIELD_VALUES = new Set(["storyPoints", "originalEstimate", "status", "labels"]);
 const JIRA_FILTER_OPERATOR_VALUES = new Set(["IS EMPTY", "IS NOT EMPTY", "=", "!=", "IN", "NOT IN"]);
 
@@ -273,20 +274,60 @@ function normalizeStringArray(values) {
   return [...new Set(values.map((value) => String(value || "").trim()).filter(Boolean))];
 }
 
-export function normalizeJiraFilterConditions(rawConditions) {
-  if (!Array.isArray(rawConditions) || rawConditions.length === 0) {
-    return defaultJiraImportFilters.conditions;
+function normalizeJiraFilterConnectors(rawConnectors, conditionCount) {
+  const raw = Array.isArray(rawConnectors) ? rawConnectors : [];
+  const connectors = raw.filter((c) => c === "AND" || c === "OR").slice(0, Math.max(0, conditionCount - 1));
+  while (connectors.length < conditionCount - 1) connectors.push("AND");
+  return connectors;
+}
+
+function normalizeJiraFilterNode(node, depth) {
+  if (!node || typeof node !== "object") {
+    return null;
   }
-  const valid = rawConditions
-    .filter((c) => c && typeof c === "object" && JIRA_FILTER_FIELD_VALUES.has(c.field) && JIRA_FILTER_OPERATOR_VALUES.has(c.operator))
-    .map((c) => {
-      if (c.field === "status" || c.field === "labels") {
-        return { field: c.field, operator: c.operator, value: Array.isArray(c.value) ? c.value.map(String) : [] };
-      }
-      const numVal = c.value === null || c.value === undefined ? null : Number(c.value);
-      return { field: c.field, operator: c.operator, value: Number.isFinite(numVal) ? numVal : null };
-    });
+  if (node.type === "group") {
+    // Refuse to recurse past the nesting cap; a group deeper than that is dropped whole.
+    if (depth >= JIRA_FILTER_MAX_GROUP_DEPTH) {
+      return null;
+    }
+    const conditions = normalizeJiraFilterNodes(node.conditions, depth + 1);
+    if (conditions.length === 0) {
+      return null;
+    }
+    return { type: "group", conditions, connectors: normalizeJiraFilterConnectors(node.connectors, conditions.length) };
+  }
+  if (!JIRA_FILTER_FIELD_VALUES.has(node.field) || !JIRA_FILTER_OPERATOR_VALUES.has(node.operator)) {
+    return null;
+  }
+  if (node.field === "status" || node.field === "labels") {
+    return { field: node.field, operator: node.operator, value: Array.isArray(node.value) ? node.value.map(String) : [] };
+  }
+  const numVal = node.value === null || node.value === undefined ? null : Number(node.value);
+  return { field: node.field, operator: node.operator, value: Number.isFinite(numVal) ? numVal : null };
+}
+
+function normalizeJiraFilterNodes(rawNodes, depth) {
+  if (!Array.isArray(rawNodes)) {
+    return [];
+  }
+  return rawNodes.map((node) => normalizeJiraFilterNode(node, depth)).filter(Boolean);
+}
+
+export function normalizeJiraFilterConditions(rawConditions) {
+  const valid = normalizeJiraFilterNodes(rawConditions, 0);
   return valid.length > 0 ? valid : defaultJiraImportFilters.conditions;
+}
+
+// Settings fall back to the default rule when nothing valid survives; a request payload
+// must not, because "no conditions" legitimately means "import everything".
+export function normalizeJiraImportFilters(rawFilters) {
+  const conditions = normalizeJiraFilterNodes(rawFilters?.conditions, 0);
+  return { conditions, connectors: normalizeJiraFilterConnectors(rawFilters?.connectors, conditions.length) };
+}
+
+function normalizeJiraDefaultImportFilters(rawFilters) {
+  const conditions = normalizeJiraFilterConditions(rawFilters?.conditions);
+  return { conditions, connectors: normalizeJiraFilterConnectors(rawFilters?.connectors, conditions.length) };
 }
 
 function normalizeJiraIntegrationSettings(settings = {}) {
@@ -296,13 +337,7 @@ function normalizeJiraIntegrationSettings(settings = {}) {
     ? String(settings.originalEstimateMode || "").trim()
     : defaultJiraIntegrationSettings.originalEstimateMode;
 
-  const rawFilters = settings.defaultImportFilters;
-  const conditions = normalizeJiraFilterConditions(rawFilters?.conditions);
-  const rawConnectors = Array.isArray(rawFilters?.connectors) ? rawFilters.connectors : [];
-  const connectors = rawConnectors
-    .filter((c) => c === "AND" || c === "OR")
-    .slice(0, Math.max(0, conditions.length - 1));
-  while (connectors.length < conditions.length - 1) connectors.push("AND");
+  const defaultImportFilters = normalizeJiraDefaultImportFilters(settings.defaultImportFilters);
 
   return {
     enabled: Boolean(settings.enabled),
@@ -318,7 +353,7 @@ function normalizeJiraIntegrationSettings(settings = {}) {
     originalEstimateMinutesPerStoryPoint: Math.max(1, Number(settings.originalEstimateMinutesPerStoryPoint) || 30),
     postCommentEnabled: settings.postCommentEnabled !== false,
     postPdfEnabled: settings.postPdfEnabled !== false,
-    defaultImportFilters: { conditions, connectors },
+    defaultImportFilters,
   };
 }
 

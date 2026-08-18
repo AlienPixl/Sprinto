@@ -50,6 +50,7 @@ import {
   postJiraIssueReport,
   testJiraConnection,
 } from "./jira.js";
+import { clearJiraCache } from "./jira-cache.js";
 import {
   addQueueIssue,
   capabilitiesFor,
@@ -87,6 +88,7 @@ import {
   getHistoryIssue,
   getSettings,
   getRoomSnapshot,
+  normalizeJiraImportFilters,
   getSettingsCompat,
   getUserById,
   getUserBySession,
@@ -145,6 +147,11 @@ app.use(express.json({ limit: "10mb" }));
 // Rate limiters
 const globalApiLimiter = createRateLimiter({ limit: 120, windowMs: 60_000, keyFn: keyByUserId, message: "Too many requests. Please slow down." });
 const roomMutationLimiter = createRateLimiter({ limit: 20, windowMs: 10_000, keyFn: keyByUserId, message: "Too many room actions. Please slow down." });
+// Jira limits are split by request cost. Metadata is served from a short-lived cache, so
+// it can be generous; issue searches are cheap but frequent; previews, imports and worklog
+// reports are the expensive calls that actually put us near the Jira API rate limit.
+const jiraMetaLimiter = createRateLimiter({ limit: 20, windowMs: 30_000, keyFn: keyByUserId, message: "Too many Jira requests. Please slow down." });
+const jiraSearchLimiter = createRateLimiter({ limit: 10, windowMs: 30_000, keyFn: keyByUserId, message: "Too many Jira searches. Please slow down." });
 const jiraLimiter = createRateLimiter({ limit: 5, windowMs: 30_000, keyFn: keyByUserId, message: "Too many Jira requests. Please slow down." });
 const loginLimiter = createRateLimiter({ limit: 10, windowMs: 60_000, keyFn: keyByIp, message: "Too many login attempts. Please wait a moment." });
 const wsMessageLimiter = createWsRateLimiter({ limit: 30, windowMs: 10_000 });
@@ -2022,7 +2029,7 @@ app.post("/api/rooms/:roomId/reset", requireUser, roomMutationLimiter, async (re
   json(res, await getRoomSnapshot(req.params.roomId, req.user.id));
 });
 
-app.get("/api/jira/statuses", requireUser, requireJiraImport, jiraLimiter, async (_req, res) => {
+app.get("/api/jira/statuses", requireUser, requireJiraImport, jiraMetaLimiter, async (_req, res) => {
   try {
     const settings = await getSettings();
     json(res, { statuses: await getJiraStatuses(settings) });
@@ -2031,7 +2038,7 @@ app.get("/api/jira/statuses", requireUser, requireJiraImport, jiraLimiter, async
   }
 });
 
-app.get("/api/jira/labels", requireUser, requireJiraImport, jiraLimiter, async (_req, res) => {
+app.get("/api/jira/labels", requireUser, requireJiraImport, jiraMetaLimiter, async (_req, res) => {
   try {
     const settings = await getSettings();
     json(res, { labels: await getJiraLabels(settings) });
@@ -2040,7 +2047,7 @@ app.get("/api/jira/labels", requireUser, requireJiraImport, jiraLimiter, async (
   }
 });
 
-app.get("/api/jira/boards", requireUser, requireJiraImport, jiraLimiter, async (_req, res) => {
+app.get("/api/jira/boards", requireUser, requireJiraImport, jiraMetaLimiter, async (_req, res) => {
   try {
     const settings = await getSettings();
     json(res, { boards: await listJiraBoards(settings) });
@@ -2049,7 +2056,7 @@ app.get("/api/jira/boards", requireUser, requireJiraImport, jiraLimiter, async (
   }
 });
 
-app.get("/api/jira/boards/:boardId/sprints", requireUser, requireJiraImport, jiraLimiter, async (req, res) => {
+app.get("/api/jira/boards/:boardId/sprints", requireUser, requireJiraImport, jiraMetaLimiter, async (req, res) => {
   try {
     const settings = await getSettings();
     json(res, { sprints: await listJiraSprints(settings, req.params.boardId) });
@@ -2064,7 +2071,7 @@ app.post("/api/jira/boards/:boardId/sprints/:sprintId/issues/preview", requireUs
     const issues = await listJiraIssues(settings, {
       boardId: req.params.boardId,
       sprintId: req.params.sprintId,
-      filters: req.body || {},
+      filters: normalizeJiraImportFilters(req.body),
     });
     json(res, { issues });
   } catch (error) {
@@ -2079,7 +2086,7 @@ app.post("/api/jira/boards/:boardId/issues/preview", requireUser, requireJiraImp
     const issues = await listJiraIssues(settings, {
       boardId: req.params.boardId,
       sprintId: importScope.sprintId,
-      filters: req.body || {},
+      filters: normalizeJiraImportFilters(req.body),
     });
     json(res, { issues });
   } catch (error) {
@@ -2102,7 +2109,11 @@ app.post("/api/rooms/:roomId/jira/import", requireUser, requireJiraImport, jiraL
 
     const importScope = await resolveJiraImportScope(settings, boardId, sprintId);
     const normalizedSprintId = importScope.sprintId;
-    const importedIssues = await listJiraIssues(settings, { boardId, sprintId: normalizedSprintId, filters });
+    const importedIssues = await listJiraIssues(settings, {
+      boardId,
+      sprintId: normalizedSprintId,
+      filters: normalizeJiraImportFilters(filters),
+    });
     const {
       queuedByExternalId,
       existingOutsideQueueByExternalId,
@@ -2194,7 +2205,7 @@ app.post("/api/rooms/:roomId/jira/import", requireUser, requireJiraImport, jiraL
   }
 });
 
-app.get("/api/rooms/:roomId/jira/issues/:issueId/assignees", requireUser, requireJiraEstimateWrite, jiraLimiter, async (req, res) => {
+app.get("/api/rooms/:roomId/jira/issues/:issueId/assignees", requireUser, requireJiraEstimateWrite, jiraSearchLimiter, async (req, res) => {
   try {
     const settings = await getSettings();
     const jiraSettings = settings.integrations?.jira;
@@ -2574,7 +2585,7 @@ app.post("/api/jira/worklog/report", requireUser, requireWorklogView, jiraLimite
   }
 });
 
-app.get("/api/jira/worklog/users", requireUser, requireWorklogView, jiraLimiter, async (req, res) => {
+app.get("/api/jira/worklog/users", requireUser, requireWorklogView, jiraSearchLimiter, async (req, res) => {
   try {
     const users = await listJiraWorklogUsers(await getSettings(), String(req.query?.query || ""));
     json(res, { users });
@@ -2583,7 +2594,7 @@ app.get("/api/jira/worklog/users", requireUser, requireWorklogView, jiraLimiter,
   }
 });
 
-app.get("/api/jira/worklog/link-types", requireUser, requireWorklogView, jiraLimiter, async (req, res) => {
+app.get("/api/jira/worklog/link-types", requireUser, requireWorklogView, jiraMetaLimiter, async (req, res) => {
   try {
     const linkTypes = await listJiraIssueLinkTypes(await getSettings());
     json(res, { linkTypes });
@@ -2592,7 +2603,7 @@ app.get("/api/jira/worklog/link-types", requireUser, requireWorklogView, jiraLim
   }
 });
 
-app.get("/api/jira/worklog/issues", requireUser, requireWorklogView, jiraLimiter, async (req, res) => {
+app.get("/api/jira/worklog/issues", requireUser, requireWorklogView, jiraSearchLimiter, async (req, res) => {
   try {
     const issues = await searchJiraWorklogIssues(await getSettings(), String(req.query?.query || ""));
     json(res, { issues });
@@ -2601,7 +2612,7 @@ app.get("/api/jira/worklog/issues", requireUser, requireWorklogView, jiraLimiter
   }
 });
 
-app.get("/api/jira/worklog/issues/:issueKey", requireUser, requireWorklogView, jiraLimiter, async (req, res) => {
+app.get("/api/jira/worklog/issues/:issueKey", requireUser, requireWorklogView, jiraSearchLimiter, async (req, res) => {
   try {
     const issue = await getJiraWorklogIssue(await getSettings(), String(req.params.issueKey || ""));
     if (!issue) {
@@ -2834,6 +2845,9 @@ app.put("/api/admin/settings/integrations", requireUser, requireManageIntegratio
   await upsertSettings({
     jira_integration: nextJira,
   });
+  // Site, credentials or the Kanban toggle may have changed — drop cached metadata so the
+  // next picker reflects the new configuration instead of the previous site's lists.
+  clearJiraCache();
   const nextSettings = sanitizeSettingsForAudit(await getSettingsCompat());
   await logAudit(req.user.id, "settings.integrations.update", "settings", buildAuditChangeSet(previousSettings, nextSettings));
   json(res, await getAdminOverviewCompat(req.user));

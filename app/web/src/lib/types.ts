@@ -163,13 +163,26 @@ export type JiraFilterCondition = {
   value: number | string | string[] | null;
 };
 
+/** A parenthesised sub-expression. Children are joined left to right by `connectors`. */
+export type JiraFilterGroup = {
+  type: "group";
+  conditions: JiraFilterNode[];
+  connectors: JiraFilterConnector[];
+};
+
+export type JiraFilterNode = JiraFilterCondition | JiraFilterGroup;
+
+export function isJiraFilterGroup(node: JiraFilterNode): node is JiraFilterGroup {
+  return (node as JiraFilterGroup).type === "group";
+}
+
 export type JiraStatus = {
   id: string;
   name: string;
 };
 
 export type JiraImportFilters = {
-  conditions: JiraFilterCondition[];
+  conditions: JiraFilterNode[];
   connectors: JiraFilterConnector[];
 };
 

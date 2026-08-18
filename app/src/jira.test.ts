@@ -428,6 +428,180 @@ describe("jira helpers", () => {
     expect(notInIssues[0].key).toBe("PROJ-3");
   });
 
+  it("evaluates a grouped label condition as its own parenthesis", async () => {
+    const buildIssuesResponse = () => ({
+      ok: true,
+      json: async () => ({
+        issues: [
+          {
+            id: "1",
+            key: "PROJ-1",
+            fields: {
+              summary: "Ready, open",
+              timetracking: {},
+              status: { id: "10", name: "To Do" },
+              issuetype: { name: "Story" },
+              labels: ["dor"],
+              customfield_10016: null,
+            },
+          },
+          {
+            id: "2",
+            key: "PROJ-2",
+            fields: {
+              summary: "Automated, open",
+              timetracking: {},
+              status: { id: "10", name: "To Do" },
+              issuetype: { name: "Story" },
+              labels: ["auto"],
+              customfield_10016: null,
+            },
+          },
+          {
+            id: "3",
+            key: "PROJ-3",
+            fields: {
+              summary: "Automated, but done",
+              timetracking: {},
+              status: { id: "99", name: "Done" },
+              issuetype: { name: "Story" },
+              labels: ["auto"],
+              customfield_10016: null,
+            },
+          },
+          {
+            id: "4",
+            key: "PROJ-4",
+            fields: {
+              summary: "Open, unlabelled",
+              timetracking: {},
+              status: { id: "10", name: "To Do" },
+              issuetype: { name: "Story" },
+              labels: [],
+              customfield_10016: null,
+            },
+          },
+        ],
+        total: 4,
+      }),
+    });
+
+    // status NOT IN (Done) AND (labels IN (dor) OR labels IN (auto))
+    const groupedFilters = {
+      conditions: [
+        { field: "status", operator: "NOT IN", value: ["99"] },
+        {
+          type: "group",
+          conditions: [
+            { field: "labels", operator: "IN", value: ["dor"] },
+            { field: "labels", operator: "IN", value: ["auto"] },
+          ],
+          connectors: ["OR"],
+        },
+      ],
+      connectors: ["AND"],
+    };
+
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => [{ id: "customfield_10016", name: "Story Points" }] })
+      .mockResolvedValueOnce(buildIssuesResponse()) as unknown as typeof fetch);
+
+    const grouped = await listJiraSprintIssues(settings, { boardId: "10", sprintId: "20", filters: groupedFilters });
+    expect(grouped.map((issue) => issue.key)).toEqual(["PROJ-1", "PROJ-2"]);
+
+    // Without the group the same rules fold left to right into (status AND dor) OR auto,
+    // which wrongly lets the done issue through.
+    const flatFilters = {
+      conditions: [
+        { field: "status", operator: "NOT IN", value: ["99"] },
+        { field: "labels", operator: "IN", value: ["dor"] },
+        { field: "labels", operator: "IN", value: ["auto"] },
+      ],
+      connectors: ["AND", "OR"],
+    };
+
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => [{ id: "customfield_10016", name: "Story Points" }] })
+      .mockResolvedValueOnce(buildIssuesResponse()) as unknown as typeof fetch);
+
+    const flat = await listJiraSprintIssues(settings, { boardId: "10", sprintId: "20", filters: flatFilters });
+    expect(flat.map((issue) => issue.key)).toEqual(["PROJ-1", "PROJ-2", "PROJ-3"]);
+  });
+
+  it("evaluates groups nested inside groups innermost first", async () => {
+    const buildIssuesResponse = () => ({
+      ok: true,
+      json: async () => ({
+        issues: [
+          {
+            id: "1",
+            key: "PROJ-1",
+            fields: {
+              summary: "Estimated and ready",
+              timetracking: {},
+              status: { id: "10", name: "To Do" },
+              issuetype: { name: "Story" },
+              labels: ["dor"],
+              customfield_10016: 5,
+            },
+          },
+          {
+            id: "2",
+            key: "PROJ-2",
+            fields: {
+              summary: "Unestimated and ready",
+              timetracking: {},
+              status: { id: "10", name: "To Do" },
+              issuetype: { name: "Story" },
+              labels: ["dor"],
+              customfield_10016: null,
+            },
+          },
+          {
+            id: "3",
+            key: "PROJ-3",
+            fields: {
+              summary: "Automated",
+              timetracking: {},
+              status: { id: "10", name: "To Do" },
+              issuetype: { name: "Story" },
+              labels: ["auto"],
+              customfield_10016: null,
+            },
+          },
+        ],
+        total: 3,
+      }),
+    });
+
+    // labels IN (auto) OR (labels IN (dor) AND storyPoints IS EMPTY)
+    const filters = {
+      conditions: [
+        { field: "labels", operator: "IN", value: ["auto"] },
+        {
+          type: "group",
+          conditions: [
+            { field: "labels", operator: "IN", value: ["dor"] },
+            {
+              type: "group",
+              conditions: [{ field: "storyPoints", operator: "IS EMPTY", value: null }],
+              connectors: [],
+            },
+          ],
+          connectors: ["AND"],
+        },
+      ],
+      connectors: ["OR"],
+    };
+
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => [{ id: "customfield_10016", name: "Story Points" }] })
+      .mockResolvedValueOnce(buildIssuesResponse()) as unknown as typeof fetch);
+
+    const issues = await listJiraSprintIssues(settings, { boardId: "10", sprintId: "20", filters });
+    expect(issues.map((issue) => issue.key)).toEqual(["PROJ-2", "PROJ-3"]);
+  });
+
   it("loads distinct sorted labels across pages", async () => {
     vi.stubGlobal("fetch", vi.fn()
       .mockResolvedValueOnce({

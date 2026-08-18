@@ -355,10 +355,14 @@ describe("AdminPanel", () => {
       fireEvent.click(screen.getByRole("button", { name: /Jira Cloud/ }));
     });
 
-    await waitFor(() => expect(onFetchJiraStatuses).toHaveBeenCalled());
+    // Statuses load on first open of the picker, not when the Jira section is expanded.
+    expect(onFetchJiraStatuses).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole("button", { name: /pick statuses/ }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /pick statuses/ }));
+    });
 
+    await waitFor(() => expect(onFetchJiraStatuses).toHaveBeenCalledTimes(1));
     expect(screen.getByText("In Progress")).toBeTruthy();
     expect(screen.getByText("Done")).toBeTruthy();
 

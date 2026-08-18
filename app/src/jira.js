@@ -13,6 +13,15 @@ import {
 } from "pdf-lib";
 import * as fontkit from "fontkit";
 import sharp from "sharp";
+import { buildJiraCacheKey, withJiraCache } from "./jira-cache.js";
+
+// Metadata time-to-live. Sprints get the shortest window because a new sprint is the
+// one list a user is likely to create and then immediately expect to see.
+const BOARDS_TTL_MS = 10 * 60_000;
+const SPRINTS_TTL_MS = 2 * 60_000;
+const STATUSES_TTL_MS = 10 * 60_000;
+const LABELS_TTL_MS = 10 * 60_000;
+const LINK_TYPES_TTL_MS = 30 * 60_000;
 
 function normalizeBaseUrl(baseUrl) {
   return String(baseUrl || "").trim().replace(/\/+$/, "");
@@ -247,6 +256,15 @@ export async function getJiraBoard(settings, boardId) {
 
 export async function listJiraBoards(settings) {
   const jira = ensureJiraConfigured(settings);
+  // offerKanbanBoards changes the returned set, so it belongs in the cache key.
+  return withJiraCache(
+    buildJiraCacheKey(jira, "boards", jira.offerKanbanBoards ? "with-kanban" : "scrum-only"),
+    BOARDS_TTL_MS,
+    () => fetchJiraBoards(jira)
+  );
+}
+
+async function fetchJiraBoards(jira) {
   const boards = [];
   let startAt = 0;
 
@@ -267,6 +285,14 @@ export async function listJiraBoards(settings) {
 
 export async function listJiraSprints(settings, boardId) {
   const jira = ensureJiraConfigured(settings);
+  return withJiraCache(
+    buildJiraCacheKey(jira, "sprints", boardId),
+    SPRINTS_TTL_MS,
+    () => fetchJiraSprints(jira, boardId)
+  );
+}
+
+async function fetchJiraSprints(jira, boardId) {
   const sprints = [];
   let startAt = 0;
 
@@ -366,6 +392,10 @@ export async function listJiraWorklogUsers(settings, search = "") {
 
 export async function listJiraIssueLinkTypes(settings) {
   const jira = ensureJiraConfigured(settings);
+  return withJiraCache(buildJiraCacheKey(jira, "link-types"), LINK_TYPES_TTL_MS, () => fetchJiraIssueLinkTypes(jira));
+}
+
+async function fetchJiraIssueLinkTypes(jira) {
   const payload = await jiraRequest(jira, "/rest/api/3/issueLinkType");
   const values = Array.isArray(payload?.issueLinkTypes) ? payload.issueLinkTypes : [];
   return values
@@ -478,21 +508,51 @@ function parseOriginalEstimateSeconds(timetracking) {
   return seconds;
 }
 
-function matchesIssueImportFilters(issue, storyPointsFieldId, filters) {
-  const storyPointsValue = issue?.fields?.[storyPointsFieldId];
-  const originalEstimateSeconds = parseOriginalEstimateSeconds(issue?.fields?.timetracking);
-  const statusId = String(issue?.fields?.status?.id || "");
-  const labels = Array.isArray(issue?.fields?.labels) ? issue.fields.labels.map(String) : [];
+function isFilterGroup(node) {
+  return Boolean(node) && typeof node === "object" && node.type === "group";
+}
 
-  if (!filters.conditions || filters.conditions.length === 0) return true;
+// A group is a parenthesised sub-expression: its own children are evaluated first,
+// then folded left to right by the connectors between them. Nesting is unlimited,
+// so `A AND (B OR (C AND D))` evaluates the innermost group first.
+function evaluateFilterNodes(nodes, connectors, context) {
+  const list = Array.isArray(nodes) ? nodes : [];
+  if (list.length === 0) return true;
 
-  let result = evaluateFilterCondition(filters.conditions[0], storyPointsValue, originalEstimateSeconds, statusId, labels);
-  for (let i = 1; i < filters.conditions.length; i++) {
-    const condResult = evaluateFilterCondition(filters.conditions[i], storyPointsValue, originalEstimateSeconds, statusId, labels);
-    const connector = filters.connectors?.[i - 1] ?? "AND";
-    result = connector === "OR" ? result || condResult : result && condResult;
+  let result = evaluateFilterNode(list[0], context);
+  for (let i = 1; i < list.length; i++) {
+    const connector = connectors?.[i - 1] === "OR" ? "OR" : "AND";
+    // Short-circuit so an empty or malformed branch cannot flip an already settled result.
+    if (connector === "OR" && result) continue;
+    if (connector === "AND" && !result) continue;
+    result = evaluateFilterNode(list[i], context);
   }
   return result;
+}
+
+function evaluateFilterNode(node, context) {
+  if (isFilterGroup(node)) {
+    return evaluateFilterNodes(node.conditions, node.connectors, context);
+  }
+  if (!node || typeof node !== "object") return true;
+  return evaluateFilterCondition(
+    node,
+    context.storyPointsValue,
+    context.originalEstimateSeconds,
+    context.statusId,
+    context.labels
+  );
+}
+
+function matchesIssueImportFilters(issue, storyPointsFieldId, filters) {
+  const context = {
+    storyPointsValue: issue?.fields?.[storyPointsFieldId],
+    originalEstimateSeconds: parseOriginalEstimateSeconds(issue?.fields?.timetracking),
+    statusId: String(issue?.fields?.status?.id || ""),
+    labels: Array.isArray(issue?.fields?.labels) ? issue.fields.labels.map(String) : [],
+  };
+
+  return evaluateFilterNodes(filters?.conditions, filters?.connectors, context);
 }
 
 function mapImportedJiraIssue(issue, jira, storyPointsFieldId) {
@@ -525,6 +585,10 @@ function mapImportedJiraIssue(issue, jira, storyPointsFieldId) {
 
 export async function getJiraStatuses(settings) {
   const jira = ensureJiraConfigured(settings);
+  return withJiraCache(buildJiraCacheKey(jira, "statuses"), STATUSES_TTL_MS, () => fetchJiraStatuses(jira));
+}
+
+async function fetchJiraStatuses(jira) {
   const result = await jiraRequest(jira, "/rest/api/2/status");
   return Array.isArray(result)
     ? result.map((s) => ({ id: String(s.id), name: String(s.name || "") }))
@@ -533,6 +597,10 @@ export async function getJiraStatuses(settings) {
 
 export async function getJiraLabels(settings) {
   const jira = ensureJiraConfigured(settings);
+  return withJiraCache(buildJiraCacheKey(jira, "labels"), LABELS_TTL_MS, () => fetchJiraLabels(jira));
+}
+
+async function fetchJiraLabels(jira) {
   const labels = [];
   let startAt = 0;
   while (startAt < 5000) {

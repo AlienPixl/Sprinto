@@ -112,11 +112,13 @@ export function WorklogView({ onLoadIssue: _onLoadIssue, onLoadIssues, onLoadLin
   const [issueOptions, setIssueOptions] = useState<JiraWorklogIssue[]>([]);
   const [issueLookup, setIssueLookup] = useState<Record<string, JiraWorklogIssue>>({});
   const [issuesLoading, setIssuesLoading] = useState(false);
+  const [issuesSearched, setIssuesSearched] = useState(false);
   const [userSearch, setUserSearch] = useState("");
   const [userPickerOpen, setUserPickerOpen] = useState(false);
   const [userOptions, setUserOptions] = useState<JiraAssignableUser[]>([]);
   const [userLookup, setUserLookup] = useState<Record<string, JiraAssignableUser>>({});
   const [usersLoading, setUsersLoading] = useState(false);
+  const [usersSearched, setUsersSearched] = useState(false);
   const [linkedSettingsOpen, setLinkedSettingsOpen] = useState(false);
   const [linkTypes, setLinkTypes] = useState<JiraIssueLinkType[]>([]);
   const [linkTypesLoading, setLinkTypesLoading] = useState(false);
@@ -124,85 +126,68 @@ export function WorklogView({ onLoadIssue: _onLoadIssue, onLoadIssues, onLoadLin
   const [linkTypesError, setLinkTypesError] = useState("");
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [exportingFormat, setExportingFormat] = useState<WorklogExportFormat | "">("");
+  // Last query actually sent to Jira, so repeated Enter on the same text is a no-op.
+  const lastIssueQueryRef = useRef("");
+  const lastUserQueryRef = useRef("");
   const issuePickerRef = useRef<HTMLDivElement | null>(null);
   const userPickerRef = useRef<HTMLDivElement | null>(null);
   const exportMenuRef = useRef<HTMLDivElement | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
+  // Jira search runs only when the user asks for it — Enter or the search button.
+  // Searching while typing turned a single lookup into three or four Jira calls and
+  // was the fastest way to hit the API rate limit.
+  async function runIssueSearch() {
     const normalizedSearch = issueSearch.trim();
-
     if (!normalizedSearch) {
       setIssueOptions([]);
-      setIssuesLoading(false);
-      return () => {
-        cancelled = true;
-      };
+      setIssuesSearched(false);
+      return;
+    }
+    if (issuesLoading || lastIssueQueryRef.current === normalizedSearch) {
+      return;
     }
 
+    lastIssueQueryRef.current = normalizedSearch;
     setIssuesLoading(true);
-    const timer = window.setTimeout(() => {
-      void onLoadIssues(normalizedSearch)
-        .then((nextIssues) => {
-          if (!cancelled) {
-            setIssueOptions(nextIssues);
-          }
-        })
-        .catch(() => {
-          if (!cancelled) {
-            setIssueOptions([]);
-          }
-        })
-        .finally(() => {
-          if (!cancelled) {
-            setIssuesLoading(false);
-          }
-        });
-    }, 180);
+    setIssuePickerOpen(true);
+    try {
+      const nextIssues = await onLoadIssues(normalizedSearch);
+      setIssueOptions(nextIssues);
+    } catch {
+      setIssueOptions([]);
+    } finally {
+      setIssuesSearched(true);
+      setIssuesLoading(false);
+    }
+  }
 
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [issueSearch, onLoadIssues]);
+  async function runUserSearch() {
+    const normalizedSearch = userSearch.trim();
+    if (usersLoading || (lastUserQueryRef.current === normalizedSearch && usersSearched)) {
+      return;
+    }
 
-  useEffect(() => {
-    let cancelled = false;
+    lastUserQueryRef.current = normalizedSearch;
     setUsersLoading(true);
-
-    const timer = window.setTimeout(() => {
-      void onLoadUsers(userSearch)
-        .then((nextUsers) => {
-          if (cancelled) {
-            return;
-          }
-          setUserOptions(nextUsers);
-          setUserLookup((current) => ({
-            ...current,
-            ...Object.fromEntries(nextUsers.map((user) => {
-              const scopeType = getWorklogPrincipalScopeType(user);
-              const selectionKey = scopeType === "group" ? String(user.groupId || "").trim() : String(user.accountId || "").trim();
-              return [getWorklogPrincipalLookupKey(selectionKey, scopeType), user];
-            })),
-          }));
-        })
-        .catch(() => {
-          if (!cancelled) {
-            setUserOptions([]);
-          }
-        })
-        .finally(() => {
-          if (!cancelled) {
-            setUsersLoading(false);
-          }
-        });
-    }, 180);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [onLoadUsers, userSearch]);
+    setUserPickerOpen(true);
+    try {
+      const nextUsers = await onLoadUsers(normalizedSearch);
+      setUserOptions(nextUsers);
+      setUserLookup((current) => ({
+        ...current,
+        ...Object.fromEntries(nextUsers.map((user) => {
+          const scopeType = getWorklogPrincipalScopeType(user);
+          const selectionKey = scopeType === "group" ? String(user.groupId || "").trim() : String(user.accountId || "").trim();
+          return [getWorklogPrincipalLookupKey(selectionKey, scopeType), user];
+        })),
+      }));
+    } catch {
+      setUserOptions([]);
+    } finally {
+      setUsersSearched(true);
+      setUsersLoading(false);
+    }
+  }
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -305,7 +290,7 @@ export function WorklogView({ onLoadIssue: _onLoadIssue, onLoadIssues, onLoadLin
     return !selectedPrincipalScopeKeys.has(principalKey);
   });
   const showIssuePicker = issuePickerOpen && (issuesLoading || availableIssueOptions.length > 0 || issueSearch.trim().length > 0);
-  const showUserPicker = userPickerOpen && (usersLoading || availableUserOptions.length > 0 || userSearch.trim().length > 0);
+  const showUserPicker = userPickerOpen && (usersLoading || availableUserOptions.length > 0 || usersSearched || userSearch.trim().length > 0);
   const availablePrimaryGroups = getAvailableGroupByOptions();
   const availableSecondaryGroups = getAvailableSecondaryGroupByOptions(grouping.primary);
   const summaryText = `${summary.issueCount} issues · ${summary.userCount} users · ${summary.totalEntries} entries · ${summary.blockCount} groups`;
@@ -422,12 +407,16 @@ export function WorklogView({ onLoadIssue: _onLoadIssue, onLoadIssues, onLoadLin
     setIssueSearch("");
     setIssueOptions([]);
     setIssuesLoading(false);
+    setIssuesSearched(false);
+    lastIssueQueryRef.current = "";
   }
 
   function clearUserSelection() {
     setUserSearch("");
     setUserOptions([]);
     setUsersLoading(false);
+    setUsersSearched(false);
+    lastUserQueryRef.current = "";
   }
 
   function handleSelectIssue(issue: JiraWorklogIssue) {
@@ -586,23 +575,55 @@ export function WorklogView({ onLoadIssue: _onLoadIssue, onLoadIssues, onLoadLin
             <label className="worklog-toolbar__field">
               <span>Issue</span>
               <div className="worklog-issue-picker" ref={issuePickerRef}>
-                <input
-                  placeholder="PROJ-123 nebo Mediox"
-                  type="text"
-                  value={issueSearch}
-                  onChange={(event) => {
-                    const nextValue = event.target.value;
-                    setIssueSearch(nextValue);
-                    setIssuesLoading(Boolean(nextValue.trim()));
-                    setIssuePickerOpen(true);
-                  }}
-                  onBlur={() => window.setTimeout(() => clearIssueSelection(), 120)}
-                  onFocus={() => setIssuePickerOpen(true)}
-                />
+                <div className="worklog-search-field">
+                  <input
+                    placeholder="PROJ-123 nebo Mediox"
+                    type="text"
+                    value={issueSearch}
+                    onChange={(event) => {
+                      const nextValue = event.target.value;
+                      setIssueSearch(nextValue);
+                      setIssuePickerOpen(true);
+                      if (!nextValue.trim()) {
+                        setIssueOptions([]);
+                        setIssuesSearched(false);
+                        lastIssueQueryRef.current = "";
+                      }
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        // The pickers live inside the report form — Enter must search, not submit it.
+                        event.preventDefault();
+                        event.stopPropagation();
+                        void runIssueSearch();
+                      }
+                    }}
+                    onBlur={() => window.setTimeout(() => clearIssueSelection(), 120)}
+                    onFocus={() => setIssuePickerOpen(true)}
+                  />
+                  <button
+                    aria-label="Search issues"
+                    className="worklog-search-button"
+                    disabled={issuesLoading || issueSearch.trim().length === 0}
+                    onClick={() => void runIssueSearch()}
+                    title="Search issues"
+                    type="button"
+                  >
+                    {issuesLoading ? <span className="lazy-picker__spinner" aria-hidden="true" /> : "⌕"}
+                  </button>
+                </div>
                 {showIssuePicker ? (
                   <div className="worklog-issue-picker__menu">
-                    {issuesLoading ? <div className="worklog-user-picker__empty">Loading…</div> : null}
-                    {!issuesLoading && issueSearch.trim().length > 0 && availableIssueOptions.length === 0 ? <div className="worklog-user-picker__empty">No issues found</div> : null}
+                    {issuesLoading ? (
+                      <div className="lazy-picker__loading" role="status">
+                        <span className="lazy-picker__spinner" aria-hidden="true" />
+                        <span>Searching Jira…</span>
+                      </div>
+                    ) : null}
+                    {!issuesLoading && !issuesSearched && issueSearch.trim().length > 0 ? (
+                      <div className="worklog-user-picker__empty">Press Enter to search</div>
+                    ) : null}
+                    {!issuesLoading && issuesSearched && availableIssueOptions.length === 0 ? <div className="worklog-user-picker__empty">No issues found</div> : null}
                     {!issuesLoading && availableIssueOptions.length > 0 ? (
                       <>
                         <div className="worklog-issue-picker__header" aria-hidden="true">
@@ -632,24 +653,51 @@ export function WorklogView({ onLoadIssue: _onLoadIssue, onLoadIssues, onLoadLin
             <div className="worklog-toolbar__field worklog-toolbar__field--users" ref={userPickerRef}>
               <span>User or group</span>
               <div className="worklog-user-picker">
-                <input
-                  placeholder="Find user or group"
-                  type="text"
-                  value={userSearch}
-                  onChange={(event) => {
-                    setUserSearch(event.target.value);
-                    setUserPickerOpen(true);
-                  }}
-                  onBlur={() => window.setTimeout(() => clearUserSelection(), 120)}
-                  onFocus={() => setUserPickerOpen(true)}
-                />
+                <div className="worklog-search-field">
+                  <input
+                    placeholder="Find user or group"
+                    type="text"
+                    value={userSearch}
+                    onChange={(event) => {
+                      setUserSearch(event.target.value);
+                      setUserPickerOpen(true);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        void runUserSearch();
+                      }
+                    }}
+                    onBlur={() => window.setTimeout(() => clearUserSelection(), 120)}
+                    onFocus={() => setUserPickerOpen(true)}
+                  />
+                  <button
+                    aria-label="Search users and groups"
+                    className="worklog-search-button"
+                    disabled={usersLoading}
+                    onClick={() => void runUserSearch()}
+                    title="Search users and groups"
+                    type="button"
+                  >
+                    {usersLoading ? <span className="lazy-picker__spinner" aria-hidden="true" /> : "⌕"}
+                  </button>
+                </div>
                 {showUserPicker ? (
                   <div className="worklog-user-picker__menu">
-                    {usersLoading ? <div className="worklog-user-picker__empty">Loading…</div> : null}
-                    {!usersLoading && availableUserOptions.length === 0 ? (
+                    {usersLoading ? (
+                      <div className="lazy-picker__loading" role="status">
+                        <span className="lazy-picker__spinner" aria-hidden="true" />
+                        <span>Searching Jira…</span>
+                      </div>
+                    ) : null}
+                    {!usersLoading && !usersSearched ? (
+                      <div className="worklog-user-picker__empty">Press Enter to search people and groups</div>
+                    ) : null}
+                    {!usersLoading && usersSearched && availableUserOptions.length === 0 ? (
                       <div className="worklog-user-picker__empty">No people or groups found</div>
                     ) : null}
-                    {availableUserOptions.map((user) => (
+                    {!usersLoading && availableUserOptions.map((user) => (
                       <button
                         className="worklog-user-option"
                         key={getWorklogPrincipalLookupKey(getWorklogPrincipalScopeType(user) === "group" ? user.groupId || "" : user.accountId, getWorklogPrincipalScopeType(user))}

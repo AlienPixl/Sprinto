@@ -66,6 +66,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
         }
       } catch {}
     }
+    if (response.status === 429) {
+      // Rate limited — say so plainly instead of surfacing a bare status code.
+      throw new Error(errorMessage.startsWith("Request failed")
+        ? "Too many requests. Please wait a moment and try again."
+        : errorMessage);
+    }
     throw new Error(errorMessage);
   }
 
