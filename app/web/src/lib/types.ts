@@ -248,6 +248,14 @@ export type JiraImportSyncResult = {
   snapshot: RoomSnapshot;
 };
 
+export type JiraSearchImportResult = {
+  addedCount: number;
+  skippedCount: number;
+  addedIssueKeys: string[];
+  skippedIssueKeys: string[];
+  snapshot: RoomSnapshot;
+};
+
 export type JiraApplyEstimateMode = "story-points" | "original-estimate" | "both";
 
 export type JiraAssignableUser = {

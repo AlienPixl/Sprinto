@@ -14,7 +14,9 @@ import {
   listJiraWorklogUsers,
   parseImageDataUrl,
   postJiraIssueReport,
+  searchJiraImportIssues,
   searchJiraWorklogIssues,
+  fetchJiraImportIssuesByKeys,
 } from "./jira.js";
 
 const settings = {
@@ -1166,5 +1168,201 @@ describe("jira helpers", () => {
     const groupSearchBody = JSON.parse(String(fetchMock.mock.calls[0][1]?.body || "{}"));
     expect(groupSearchBody.jql).toContain('project = "MED"');
     expect(String(fetchMock.mock.calls[2][0] || "")).toContain("startedBefore=");
+  });
+
+  it("maps searched Jira issues into the import issue shape", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [{ id: "customfield_10016", name: "Story Points" }],
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ sections: [{ issues: [{ key: "PROJ-7" }] }] }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          issues: [
+            {
+              id: "700",
+              key: "PROJ-7",
+              fields: {
+                summary: "Login redirect loops",
+                priority: { id: "2", name: "High" },
+                reporter: { displayName: "Alice" },
+                timetracking: { originalEstimateSeconds: 3600 },
+                status: { id: "3", name: "In Progress" },
+                issuetype: { name: "Bug" },
+                labels: ["backend"],
+                customfield_10016: 5,
+              },
+            },
+          ],
+          total: 1,
+        }),
+      });
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    const issues = await searchJiraImportIssues(settings, "login");
+
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toMatchObject({
+      id: "700",
+      key: "PROJ-7",
+      title: "Login redirect loops",
+      issueUrl: "https://example.atlassian.net/browse/PROJ-7",
+      reporter: "Alice",
+      priority: { id: "2", name: "High" },
+      storyPoints: 5,
+      status: "In Progress",
+      issueType: "Bug",
+    });
+    expect(issues[0].jiraFieldsSnapshot.storyPoints).toBe(5);
+    expect(String(fetchMock.mock.calls[1][0] || "")).toContain("/rest/api/3/issue/picker?query=login");
+  });
+
+  it("searches an exact issue key even when the picker returns nothing", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [{ id: "customfield_10016", name: "Story Points" }],
+      })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ sections: [] }) })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          issues: [
+            {
+              id: "142",
+              key: "PROJ-142",
+              fields: {
+                summary: "Archived spike",
+                priority: null,
+                reporter: null,
+                timetracking: {},
+                status: { id: "9", name: "Done" },
+                issuetype: { name: "Task" },
+                labels: [],
+                customfield_10016: null,
+              },
+            },
+          ],
+          total: 1,
+        }),
+      });
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    const issues = await searchJiraImportIssues(settings, "proj-142");
+
+    expect(issues.map((issue) => issue.key)).toEqual(["PROJ-142"]);
+    const searchBody = JSON.parse(String(fetchMock.mock.calls[2][1]?.body || "{}"));
+    expect(searchBody.jql).toContain('key in ("PROJ-142")');
+  });
+
+  it("never applies import filters to a searched issue", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [{ id: "customfield_10016", name: "Story Points" }],
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ sections: [{ issues: [{ key: "PROJ-9" }] }] }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          issues: [
+            {
+              id: "900",
+              key: "PROJ-9",
+              fields: {
+                summary: "Already estimated",
+                priority: null,
+                reporter: null,
+                timetracking: {},
+                status: { id: "3", name: "In Progress" },
+                issuetype: { name: "Story" },
+                labels: [],
+                customfield_10016: 8,
+              },
+            },
+          ],
+          total: 1,
+        }),
+      });
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    const issues = await searchJiraImportIssues(settings, "estimated");
+
+    expect(issues.map((issue) => issue.key)).toEqual(["PROJ-9"]);
+  });
+
+  it("returns no search results for a blank query without calling Jira", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    expect(await searchJiraImportIssues(settings, "   ")).toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("fetches import issues by key and sorts them by issue key", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [{ id: "customfield_10016", name: "Story Points" }],
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          issues: [
+            {
+              id: "20",
+              key: "PROJ-20",
+              fields: {
+                summary: "Second",
+                priority: null,
+                reporter: null,
+                timetracking: {},
+                status: { id: "1", name: "To Do" },
+                issuetype: { name: "Task" },
+                labels: [],
+                customfield_10016: null,
+              },
+            },
+            {
+              id: "3",
+              key: "PROJ-3",
+              fields: {
+                summary: "First",
+                priority: null,
+                reporter: null,
+                timetracking: {},
+                status: { id: "1", name: "To Do" },
+                issuetype: { name: "Task" },
+                labels: [],
+                customfield_10016: null,
+              },
+            },
+          ],
+          total: 2,
+        }),
+      });
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    const issues = await fetchJiraImportIssuesByKeys(settings, ["proj-20", "PROJ-3", "PROJ-3", ""]);
+
+    expect(issues.map((issue) => issue.key)).toEqual(["PROJ-3", "PROJ-20"]);
+    const searchBody = JSON.parse(String(fetchMock.mock.calls[1][1]?.body || "{}"));
+    expect(searchBody.jql).toContain('key in ("PROJ-20", "PROJ-3")');
+  });
+
+  it("returns nothing when asked for import issues without keys", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    expect(await fetchJiraImportIssuesByKeys(settings, [])).toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

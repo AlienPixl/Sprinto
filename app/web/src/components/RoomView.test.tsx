@@ -118,6 +118,8 @@ const defaultProps = {
   onFetchJiraStatuses: vi.fn().mockResolvedValue([]),
   onFetchJiraLabels: vi.fn().mockResolvedValue([]),
   onPreviewJiraIssues: vi.fn().mockResolvedValue([]),
+  onSearchJiraIssues: vi.fn().mockResolvedValue([]),
+  onImportSearchedJiraIssues: vi.fn().mockResolvedValue({ addedCount: 0, skippedCount: 0, addedIssueKeys: [], skippedIssueKeys: [] }),
   onImportJiraIssues: vi.fn().mockResolvedValue({ added: 0, updated: 0, removed: 0 }),
   onApplyJiraIssueEstimate: vi.fn().mockResolvedValue({ updatedFields: [] }),
   onFetchJiraAssignableUsers: vi.fn().mockResolvedValue([]),
@@ -214,19 +216,31 @@ describe("RoomView — queue", () => {
     expect(screen.getByRole("combobox", { name: /filter queue/i })).toBeTruthy();
   });
 
-  it("shows add-issue form for managers", () => {
+  it("offers manual add to managers", () => {
     renderRoom({}, { canManageRound: true });
-    expect(screen.getByRole("textbox", { name: /add issue manually/i })).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: /add manually/i }).length).toBeGreaterThan(0);
   });
 
-  it("shows story ID input when requireStoryId is true", () => {
+  it("hides manual add from non-managers", () => {
+    renderRoom({}, { canManageRound: false });
+    expect(screen.queryAllByRole("button", { name: /add manually/i })).toHaveLength(0);
+  });
+
+  it("shows the issue fields in the manual add panel when requireStoryId is true", async () => {
     renderRoom({}, { requireStoryId: true, canManageRound: true });
-    expect(screen.getByRole("textbox", { name: /story id/i })).toBeTruthy();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /add manually/i }));
+    });
+    expect(screen.getByRole("textbox", { name: /^story id$/i })).toBeTruthy();
+    expect(screen.getByRole("textbox", { name: /^issue title$/i })).toBeTruthy();
   });
 
-  it("always shows story ID input regardless of requireStoryId", () => {
+  it("always offers the story ID field regardless of requireStoryId", async () => {
     renderRoom({}, { requireStoryId: false, canManageRound: true });
-    expect(screen.getByRole("textbox", { name: /story id/i })).toBeTruthy();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /add manually/i }));
+    });
+    expect(screen.getByRole("textbox", { name: /^story id$/i })).toBeTruthy();
   });
 });
 
@@ -348,5 +362,321 @@ describe("RoomView — delete room", () => {
         b.getAttribute("aria-label")?.toLowerCase().includes("delete")
     );
     expect(hasDelete).toBe(false);
+  });
+});
+
+function makeSearchResult(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "700",
+    key: "PROJ-7",
+    title: "Login redirect loops",
+    issueUrl: "https://example.atlassian.net/browse/PROJ-7",
+    reporter: "Alice",
+    priority: { id: "2", name: "High" },
+    storyPoints: null,
+    originalEstimateSeconds: null,
+    status: "In Progress",
+    issueType: "Bug",
+    jiraFieldsSnapshot: {},
+    ...overrides,
+  };
+}
+
+async function openJiraSearchPanel(propOverrides: Record<string, unknown> = {}) {
+  renderRoom({}, { canImportJiraIssues: true, canManageRound: true, ...propOverrides });
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: /find in jira/i }));
+  });
+}
+
+describe("RoomView — Jira issue search", () => {
+  it("hides the search button without the Jira import permission", () => {
+    renderRoom({}, { canImportJiraIssues: false, canManageRound: true });
+    expect(screen.queryAllByRole("button", { name: /find in jira/i })).toHaveLength(0);
+  });
+
+  it("shows the search button with the Jira import permission", () => {
+    renderRoom({}, { canImportJiraIssues: true, canManageRound: true });
+    expect(screen.getAllByRole("button", { name: /find in jira/i }).length).toBeGreaterThan(0);
+  });
+
+  it("does not search while typing", async () => {
+    const onSearchJiraIssues = vi.fn().mockResolvedValue([]);
+    await openJiraSearchPanel({ onSearchJiraIssues });
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText(/search jira issues/i), { target: { value: "PROJ-7" } });
+    });
+    expect(onSearchJiraIssues).not.toHaveBeenCalled();
+  });
+
+  it("searches when the search button is pressed", async () => {
+    const onSearchJiraIssues = vi.fn().mockResolvedValue([makeSearchResult()]);
+    await openJiraSearchPanel({ onSearchJiraIssues });
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText(/search jira issues/i), { target: { value: "login" } });
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^search$/i }));
+    });
+    expect(onSearchJiraIssues).toHaveBeenCalledWith("login");
+    expect(screen.getAllByText(/Login redirect loops/).length).toBeGreaterThan(0);
+  });
+
+  it("imports only the selected issues", async () => {
+    const onSearchJiraIssues = vi.fn().mockResolvedValue([
+      makeSearchResult(),
+      makeSearchResult({ id: "800", key: "PROJ-8", title: "Refactor deck editor" }),
+    ]);
+    const onImportSearchedJiraIssues = vi.fn().mockResolvedValue({
+      addedCount: 1,
+      skippedCount: 0,
+      addedIssueKeys: ["PROJ-8"],
+      skippedIssueKeys: [],
+    });
+    await openJiraSearchPanel({ onSearchJiraIssues, onImportSearchedJiraIssues });
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText(/search jira issues/i), { target: { value: "proj" } });
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^search$/i }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText(/select PROJ-8/i));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /add 1 to queue/i }));
+    });
+    expect(onImportSearchedJiraIssues).toHaveBeenCalledWith(["PROJ-8"]);
+  });
+
+  it("marks an issue already in the queue as not selectable", async () => {
+    const onSearchJiraIssues = vi.fn().mockResolvedValue([makeSearchResult()]);
+    renderRoom(
+      { issueQueue: [makeQueueItem({ id: "queued-7", externalIssueId: "700", externalIssueKey: "PROJ-7", title: "PROJ-7 Login redirect loops" })] },
+      { canImportJiraIssues: true, canManageRound: true, onSearchJiraIssues }
+    );
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /find in jira/i }));
+    });
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText(/search jira issues/i), { target: { value: "login" } });
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^search$/i }));
+    });
+    expect((screen.getByLabelText(/select PROJ-7/i) as HTMLInputElement).disabled).toBe(true);
+    expect(screen.getAllByText(/in queue/i).length).toBeGreaterThan(0);
+  });
+
+
+  it("closes the search panel and returns to the queue after a successful import", async () => {
+    const onSearchJiraIssues = vi.fn().mockResolvedValue([
+      makeSearchResult(),
+      makeSearchResult({ id: "800", key: "PROJ-8", title: "Refactor deck editor" }),
+    ]);
+    const onImportSearchedJiraIssues = vi.fn().mockResolvedValue({
+      addedCount: 2,
+      skippedCount: 0,
+      addedIssueKeys: ["PROJ-7", "PROJ-8"],
+      skippedIssueKeys: [],
+    });
+    await openJiraSearchPanel({ onSearchJiraIssues, onImportSearchedJiraIssues });
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText(/search jira issues/i), { target: { value: "proj" } });
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^search$/i }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText(/select PROJ-7/i));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText(/select PROJ-8/i));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /add 2 to queue/i }));
+    });
+
+    expect(screen.queryAllByLabelText(/search jira issues/i)).toHaveLength(0);
+    expect(screen.getAllByRole("button", { name: /find in jira/i }).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/2 added to the queue/i).length).toBeGreaterThan(0);
+  });
+
+  it("keeps the search panel open when the import fails", async () => {
+    const onSearchJiraIssues = vi.fn().mockResolvedValue([makeSearchResult()]);
+    const onImportSearchedJiraIssues = vi.fn().mockRejectedValue(new Error("Jira rejected the import"));
+    await openJiraSearchPanel({ onSearchJiraIssues, onImportSearchedJiraIssues });
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText(/search jira issues/i), { target: { value: "login" } });
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^search$/i }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText(/select PROJ-7/i));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /add 1 to queue/i }));
+    });
+
+    expect(screen.getAllByLabelText(/search jira issues/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Jira rejected the import/).length).toBeGreaterThan(0);
+  });
+
+  it("shows a message when the search finds nothing", async () => {
+    const onSearchJiraIssues = vi.fn().mockResolvedValue([]);
+    await openJiraSearchPanel({ onSearchJiraIssues });
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText(/search jira issues/i), { target: { value: "nothing" } });
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^search$/i }));
+    });
+    expect(screen.getAllByText(/no matching jira issues/i).length).toBeGreaterThan(0);
+  });
+
+  it("shows the failure separately from an empty result", async () => {
+    const onSearchJiraIssues = vi.fn().mockRejectedValue(new Error("Jira is unreachable"));
+    await openJiraSearchPanel({ onSearchJiraIssues });
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText(/search jira issues/i), { target: { value: "boom" } });
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^search$/i }));
+    });
+    expect(screen.getAllByText(/Jira is unreachable/).length).toBeGreaterThan(0);
+    expect(screen.queryAllByText(/no matching jira issues/i)).toHaveLength(0);
+  });
+});
+
+describe("RoomView — Jira writeback for a hand-picked issue", () => {
+  const jiraIntegration = { enabled: true, writeStoryPointsEnabled: true } as unknown as Record<string, unknown>;
+
+  // A searched issue lands in the queue with no board/sprint scope. Voting on it must still end in
+  // "Send to Jira" — the button keys off externalSource + externalIssueKey, never off import scope.
+  it("enables Send to Jira for a revealed issue that has no import scope", () => {
+    renderRoom(
+      {
+        status: "revealed",
+        revealed: true,
+        currentIssue: makeIssue({
+          title: "PROJ-7 - Login redirect loops",
+          status: "revealed",
+          externalSource: "jira",
+          externalIssueId: "700",
+          externalIssueKey: "PROJ-7",
+          externalIssueUrl: "https://example.atlassian.net/browse/PROJ-7",
+          importedFromBoardId: "",
+          importedFromSprintId: "",
+        }),
+      },
+      { canSendToJira: true, canManageRound: true, jiraIntegration }
+    );
+
+    const sendButton = screen
+      .getAllByRole("button")
+      .find((button) => button.textContent?.toLowerCase().includes("send to jira")) as HTMLButtonElement;
+    expect(sendButton).toBeTruthy();
+    expect(sendButton.disabled).toBe(false);
+  });
+});
+
+async function openManualAddPanel(propOverrides: Record<string, unknown> = {}) {
+  renderRoom({}, { canManageRound: true, ...propOverrides });
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: /add manually/i }));
+  });
+}
+
+describe("RoomView — manual add panel", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  it("keeps the issue fields out of the queue toolbar until the panel is opened", () => {
+    renderRoom({}, { canManageRound: true });
+    expect(screen.queryAllByLabelText(/^story id$/i)).toHaveLength(0);
+    expect(screen.getAllByRole("button", { name: /add manually/i }).length).toBeGreaterThan(0);
+  });
+
+  it("adds an issue with its story ID", async () => {
+    const onQueueIssue = vi.fn().mockResolvedValue(undefined);
+    await openManualAddPanel({ onQueueIssue });
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText(/^story id$/i), { target: { value: "PROJ-12" } });
+    });
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText(/^issue title$/i), { target: { value: "Fix pagination" } });
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^add to queue$/i }));
+    });
+    expect(onQueueIssue).toHaveBeenCalledWith("Fix pagination", "PROJ-12");
+  });
+
+  it("stays open with cleared fields after adding by default", async () => {
+    const onQueueIssue = vi.fn().mockResolvedValue(undefined);
+    await openManualAddPanel({ onQueueIssue });
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText(/^issue title$/i), { target: { value: "Fix pagination" } });
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^add to queue$/i }));
+    });
+    const titleField = screen.getByLabelText(/^issue title$/i) as HTMLInputElement;
+    expect(titleField.value).toBe("");
+  });
+
+  it("closes the panel after adding when the close option is ticked", async () => {
+    const onQueueIssue = vi.fn().mockResolvedValue(undefined);
+    await openManualAddPanel({ onQueueIssue });
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText(/close after adding/i));
+    });
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText(/^issue title$/i), { target: { value: "Fix pagination" } });
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^add to queue$/i }));
+    });
+    expect(screen.queryAllByLabelText(/^issue title$/i)).toHaveLength(0);
+    expect(screen.getAllByRole("button", { name: /add manually/i }).length).toBeGreaterThan(0);
+  });
+
+  it("remembers the close-after-adding choice across reopens", async () => {
+    await openManualAddPanel();
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText(/close after adding/i));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^close$/i }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /add manually/i }));
+    });
+    expect((screen.getByLabelText(/close after adding/i) as HTMLInputElement).checked).toBe(true);
+  });
+
+  it("refuses to add an issue without a title", async () => {
+    const onQueueIssue = vi.fn().mockResolvedValue(undefined);
+    await openManualAddPanel({ onQueueIssue });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^add to queue$/i }));
+    });
+    expect(onQueueIssue).not.toHaveBeenCalled();
+    expect(screen.getAllByText(/title is required/i).length).toBeGreaterThan(0);
+  });
+
+  it("refuses to add an issue without a story ID when the setting requires one", async () => {
+    const onQueueIssue = vi.fn().mockResolvedValue(undefined);
+    await openManualAddPanel({ onQueueIssue, requireStoryId: true });
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText(/^issue title$/i), { target: { value: "Fix pagination" } });
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^add to queue$/i }));
+    });
+    expect(onQueueIssue).not.toHaveBeenCalled();
+    expect(screen.getAllByText(/story id is required/i).length).toBeGreaterThan(0);
   });
 });

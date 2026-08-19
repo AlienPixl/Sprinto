@@ -46,6 +46,19 @@ const mockAdminUser = {
   entraMigrationState: null,
 };
 
+const mockJiraUser = {
+  id: "user-jira",
+  username: "jira",
+  displayName: "Jira User",
+  email: "jira@example.com",
+  roles: ["master"],
+  permissions: ["vote", "queue_issues", "jira_import_issues", "jira_send"],
+  authSource: "local",
+  isActive: true,
+  sessionId: "session-jira",
+  entraMigrationState: null,
+};
+
 const mockSettings = {
   updatesEnabled: false,
   scheduledTasks: {},
@@ -218,6 +231,8 @@ vi.mock("./jira.js", () => ({
   listJiraIssues: vi.fn().mockResolvedValue([]),
   listJiraSprints: vi.fn().mockResolvedValue([]),
   listJiraWorklogUsers: vi.fn().mockResolvedValue([]),
+  searchJiraImportIssues: vi.fn().mockResolvedValue([]),
+  fetchJiraImportIssuesByKeys: vi.fn().mockResolvedValue([]),
   searchJiraWorklogIssues: vi.fn().mockResolvedValue([]),
   getJiraWorklogIssue: vi.fn().mockResolvedValue(null),
   postJiraIssueReport: vi.fn().mockResolvedValue(undefined),
@@ -242,6 +257,7 @@ const {
   upsertSettings,
 } = await import("./store.js");
 const { resolveAuthenticatedUser } = await import("./login-flow.js");
+const { searchJiraImportIssues, fetchJiraImportIssuesByKeys, applyJiraEstimate } = await import("./jira.js");
 
 describe("server routes", () => {
   beforeEach(() => {
@@ -722,6 +738,174 @@ describe("server routes", () => {
         .set("Authorization", "Bearer valid-token")
         .send({ issueId: "issue-1" });
       expect(res.status).toBe(403);
+    });
+  });
+
+
+  describe("GET /api/jira/issues/search", () => {
+    const jiraSettings = { ...mockSettings, integrations: { jira: { enabled: true } } };
+
+    it("returns issues matching the query", async () => {
+      vi.mocked(getUserBySession).mockResolvedValue(mockJiraUser as any);
+      vi.mocked(getSettings).mockResolvedValue(jiraSettings as any);
+      vi.mocked(searchJiraImportIssues).mockResolvedValue([
+        { id: "700", key: "PROJ-7", title: "Login redirect loops" },
+      ] as any);
+
+      const res = await request(app)
+        .get("/api/jira/issues/search?query=login")
+        .set("Authorization", "Bearer jira-token");
+
+      expect(res.status).toBe(200);
+      expect(res.body.issues).toHaveLength(1);
+      expect(res.body.issues[0].key).toBe("PROJ-7");
+      expect(searchJiraImportIssues).toHaveBeenCalledWith(jiraSettings, "login");
+    });
+
+    it("returns 403 without the Jira import permission", async () => {
+      vi.mocked(getUserBySession).mockResolvedValue(mockAdminUser);
+      vi.mocked(getSettings).mockResolvedValue(jiraSettings as any);
+
+      const res = await request(app)
+        .get("/api/jira/issues/search?query=login")
+        .set("Authorization", "Bearer admin-token");
+
+      expect(res.status).toBe(403);
+    });
+
+    it("returns 403 when the Jira integration is disabled", async () => {
+      vi.mocked(getUserBySession).mockResolvedValue(mockJiraUser as any);
+      vi.mocked(getSettings).mockResolvedValue({ ...mockSettings, integrations: { jira: { enabled: false } } } as any);
+
+      const res = await request(app)
+        .get("/api/jira/issues/search?query=login")
+        .set("Authorization", "Bearer jira-token");
+
+      expect(res.status).toBe(403);
+    });
+  });
+
+  describe("POST /api/rooms/:roomId/jira/import-issues", () => {
+    const jiraSettings = { ...mockSettings, integrations: { jira: { enabled: true } } };
+    const searchedIssue = {
+      id: "700",
+      key: "PROJ-7",
+      title: "Login redirect loops",
+      issueUrl: "https://example.atlassian.net/browse/PROJ-7",
+      jiraFieldsSnapshot: { storyPoints: 5 },
+    };
+
+    beforeEach(() => {
+      vi.mocked(getSettings).mockResolvedValue(jiraSettings as any);
+      vi.mocked(getRoomSnapshot).mockResolvedValue({ room: { issueQueue: [], issueHistory: [], currentIssue: null } } as any);
+      vi.mocked(fetchJiraImportIssuesByKeys).mockResolvedValue([searchedIssue] as any);
+    });
+
+    it("adds a searched issue to the queue without a board or sprint scope", async () => {
+      vi.mocked(getUserBySession).mockResolvedValue(mockJiraUser as any);
+      vi.mocked(addQueueIssue).mockResolvedValue("issue-searched" as any);
+
+      const res = await request(app)
+        .post("/api/rooms/room-1/jira/import-issues")
+        .set("Authorization", "Bearer jira-token")
+        .send({ issueKeys: ["PROJ-7"] });
+
+      expect(res.status).toBe(200);
+      expect(res.body.addedCount).toBe(1);
+      expect(fetchJiraImportIssuesByKeys).toHaveBeenCalledWith(jiraSettings, ["PROJ-7"]);
+      expect(addQueueIssue).toHaveBeenCalledWith("room-1", expect.objectContaining({
+        title: "PROJ-7 - Login redirect loops",
+        source: "jira",
+        externalIssueId: "700",
+        externalIssueKey: "PROJ-7",
+        importedFromBoardId: null,
+        importedFromSprintId: null,
+      }));
+    });
+
+    it("skips an issue that is already in the room", async () => {
+      vi.mocked(getUserBySession).mockResolvedValue(mockJiraUser as any);
+      vi.mocked(getRoomSnapshot).mockResolvedValue({
+        room: {
+          issueQueue: [{ id: "issue-1", externalIssueId: "700", externalIssueKey: "PROJ-7" }],
+          issueHistory: [],
+          currentIssue: null,
+        },
+      } as any);
+      vi.mocked(addQueueIssue).mockClear();
+
+      const res = await request(app)
+        .post("/api/rooms/room-1/jira/import-issues")
+        .set("Authorization", "Bearer jira-token")
+        .send({ issueKeys: ["PROJ-7"] });
+
+      expect(res.status).toBe(200);
+      expect(res.body.addedCount).toBe(0);
+      expect(res.body.skippedIssueKeys).toEqual(["PROJ-7"]);
+      expect(addQueueIssue).not.toHaveBeenCalled();
+    });
+
+    it("returns 400 when no issue keys are given", async () => {
+      vi.mocked(getUserBySession).mockResolvedValue(mockJiraUser as any);
+
+      const res = await request(app)
+        .post("/api/rooms/room-1/jira/import-issues")
+        .set("Authorization", "Bearer jira-token")
+        .send({ issueKeys: [] });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/issue/i);
+    });
+
+    it("returns 403 without the Jira import permission", async () => {
+      vi.mocked(getUserBySession).mockResolvedValue(mockAdminUser);
+
+      const res = await request(app)
+        .post("/api/rooms/room-1/jira/import-issues")
+        .set("Authorization", "Bearer admin-token")
+        .send({ issueKeys: ["PROJ-7"] });
+
+      expect(res.status).toBe(403);
+    });
+  });
+
+
+  describe("Jira writeback for a hand-picked issue", () => {
+    const jiraSettings = { ...mockSettings, integrations: { jira: { enabled: true, originalEstimateMinutesPerStoryPoint: 30 } } };
+
+    // A searched issue is stored without a board/sprint scope. Estimate writeback must key off
+    // externalIssueKey alone — never off the import scope — or voting on it would be a dead end.
+    it("sends story points for an issue imported without a board or sprint scope", async () => {
+      vi.mocked(getUserBySession).mockResolvedValue(mockJiraUser as any);
+      vi.mocked(getSettings).mockResolvedValue(jiraSettings as any);
+      vi.mocked(getRoomSnapshot).mockResolvedValue({
+        room: {
+          issueQueue: [],
+          issueHistory: [],
+          currentIssue: {
+            id: "issue-searched",
+            externalSource: "jira",
+            externalIssueId: "700",
+            externalIssueKey: "PROJ-7",
+            importedFromBoardId: "",
+            importedFromSprintId: "",
+          },
+        },
+      } as any);
+      vi.mocked(applyJiraEstimate).mockResolvedValue({ updatedFields: ["storyPoints"] } as any);
+
+      const res = await request(app)
+        .post("/api/rooms/room-1/jira/issues/issue-searched/apply-estimate")
+        .set("Authorization", "Bearer jira-token")
+        .send({ mode: "story-points", storyPointsValue: 5 });
+
+      expect(res.status).toBe(200);
+      expect(res.body.updatedFields).toEqual(["storyPoints"]);
+      expect(applyJiraEstimate).toHaveBeenCalledWith(
+        jiraSettings,
+        "PROJ-7",
+        expect.objectContaining({ mode: "story-points", storyPointsValue: 5 })
+      );
     });
   });
 

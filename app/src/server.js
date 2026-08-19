@@ -45,6 +45,8 @@ import {
   listJiraIssues,
   listJiraSprints,
   listJiraWorklogUsers,
+  searchJiraImportIssues,
+  fetchJiraImportIssuesByKeys,
   searchJiraWorklogIssues,
   getJiraWorklogIssue,
   postJiraIssueReport,
@@ -2079,6 +2081,15 @@ app.post("/api/jira/boards/:boardId/sprints/:sprintId/issues/preview", requireUs
   }
 });
 
+app.get("/api/jira/issues/search", requireUser, requireJiraImport, jiraSearchLimiter, async (req, res) => {
+  try {
+    const issues = await searchJiraImportIssues(await getSettings(), String(req.query?.query || ""));
+    json(res, { issues });
+  } catch (error) {
+    json(res, { error: error instanceof Error ? error.message : "Failed to search Jira issues." }, 400);
+  }
+});
+
 app.post("/api/jira/boards/:boardId/issues/preview", requireUser, requireJiraImport, jiraLimiter, async (req, res) => {
   try {
     const settings = await getSettings();
@@ -2198,6 +2209,70 @@ app.post("/api/rooms/:roomId/jira/import", requireUser, requireJiraImport, jiraL
       deduplicatedCount: duplicateQueuedIssueIds.length,
       removedCount: removedIssues.length,
       removedIssueKeys: removedIssues.map((issue) => issue.externalIssueKey).filter(Boolean),
+      snapshot: await getRoomSnapshot(req.params.roomId, req.user.id),
+    });
+  } catch (error) {
+    json(res, { error: error instanceof Error ? error.message : "Failed to import Jira issues." }, 400);
+  }
+});
+
+app.post("/api/rooms/:roomId/jira/import-issues", requireUser, requireJiraImport, jiraLimiter, async (req, res) => {
+  try {
+    const requestedKeys = Array.isArray(req.body?.issueKeys) ? req.body.issueKeys : [];
+    const issueKeys = [...new Set(requestedKeys.map((key) => String(key || "").trim().toUpperCase()).filter(Boolean))];
+    if (issueKeys.length === 0) {
+      return json(res, { error: "At least one Jira issue is required." }, 400);
+    }
+
+    const snapshot = await getRoomSnapshot(req.params.roomId, req.user.id);
+    if (!snapshot) {
+      return json(res, { error: "Room not found." }, 404);
+    }
+
+    const settings = await getSettings();
+    const issues = await fetchJiraImportIssuesByKeys(settings, issueKeys);
+    if (issues.length === 0) {
+      return json(res, { error: "No matching Jira issues were found." }, 404);
+    }
+
+    // Only the external-id maps matter here; searched issues have no board/sprint scope to prune against.
+    const { queuedByExternalId, existingOutsideQueueByExternalId } = summarizeRoomJiraIssues(snapshot, null, null);
+    const addedIssueKeys = [];
+    const skippedIssueKeys = [];
+
+    for (const issue of issues) {
+      if (queuedByExternalId.has(issue.id) || existingOutsideQueueByExternalId.has(issue.id)) {
+        skippedIssueKeys.push(issue.key);
+        continue;
+      }
+
+      // importedFrom* stays empty so a later board/sprint re-sync never prunes a hand-picked issue.
+      await addQueueIssue(req.params.roomId, {
+        title: composeImportedJiraIssueTitle(issue),
+        source: "jira",
+        externalSource: "jira",
+        externalIssueId: issue.id,
+        externalIssueKey: issue.key,
+        externalIssueUrl: issue.issueUrl,
+        jiraFieldsSnapshot: issue.jiraFieldsSnapshot,
+        importedFromBoardId: null,
+        importedFromSprintId: null,
+      });
+      addedIssueKeys.push(issue.key);
+    }
+
+    await logAudit(req.user.id, "jira.import.search", "room", {
+      roomId: req.params.roomId,
+      requestedIssueKeys: issueKeys,
+      addedIssueKeys,
+      skippedIssueKeys,
+    });
+    await publishRoom(req.params.roomId);
+    json(res, {
+      addedCount: addedIssueKeys.length,
+      skippedCount: skippedIssueKeys.length,
+      addedIssueKeys,
+      skippedIssueKeys,
       snapshot: await getRoomSnapshot(req.params.roomId, req.user.id),
     });
   } catch (error) {

@@ -1868,7 +1868,7 @@ button:disabled {
 
 .queue-form-fields {
   display: grid;
-  grid-template-columns: 88px minmax(0, 1fr) auto auto;
+  grid-template-columns: auto auto minmax(0, 1fr);
   gap: 0.45rem;
   width: 100%;
   align-items: center;
@@ -2113,6 +2113,138 @@ button:disabled {
 .queue-option-item--placeholder {
   visibility: hidden;
   pointer-events: none;
+}
+
+.button-small--ghost {
+  background: transparent;
+  border: 1px solid rgba(244, 162, 97, 0.42);
+  color: inherit;
+}
+
+.manual-add-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.manual-add-panel__field {
+  display: grid;
+  gap: 0.22rem;
+}
+
+.manual-add-panel__field > span {
+  font-size: 0.72rem;
+  color: rgba(249, 243, 223, 0.72);
+}
+
+.manual-add-panel__field input {
+  min-height: 42px;
+  max-width: none;
+  padding: 0.58rem 0.72rem;
+}
+
+.manual-add-panel__option {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.74rem;
+}
+
+.manual-add-panel__option input[type="checkbox"] {
+  min-height: unset;
+  max-width: none;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
+.manual-add-panel__error {
+  margin: 0;
+  font-size: 0.74rem;
+  color: #ff6b6b;
+}
+
+.jira-search-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.jira-search-panel__query {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.45rem;
+  align-items: center;
+}
+
+.jira-search-panel__query input {
+  min-height: 42px;
+  max-width: none;
+  padding: 0.58rem 0.72rem;
+}
+
+.jira-search-panel__error {
+  margin: 0;
+  font-size: 0.74rem;
+  color: #ff6b6b;
+}
+
+.jira-search-panel__results {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.jira-search-result {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.45rem 0.68rem;
+  border-radius: 14px;
+  border: 1px solid rgba(249, 243, 223, 0.08);
+  background: rgba(249, 243, 223, 0.04);
+  cursor: pointer;
+}
+
+.jira-search-result--disabled {
+  cursor: default;
+  opacity: 0.62;
+}
+
+.jira-search-result input[type="checkbox"] {
+  min-height: unset;
+  max-width: none;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
+.jira-search-result__body {
+  display: grid;
+  gap: 0.12rem;
+  min-width: 0;
+}
+
+.jira-search-result__title {
+  font-size: 0.78rem;
+  line-height: 1.25;
+}
+
+.jira-search-result__meta {
+  font-size: 0.7rem;
+  color: rgba(249, 243, 223, 0.68);
+}
+
+.jira-search-result__tag {
+  white-space: nowrap;
+  font-size: 0.66rem;
 }
 
 .queue-pagination {
@@ -7096,7 +7228,7 @@ select:disabled {
   }
 
   .queue-form-fields {
-    grid-template-columns: 88px minmax(0, 1fr) auto;
+    grid-template-columns: auto auto minmax(0, 1fr);
   }
 
   .queue-toolbar {
@@ -7541,16 +7673,16 @@ select:disabled {
   }
 
   .queue-form-fields {
-    grid-template-columns: 88px minmax(0, 1fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .queue-form-fields .button-small {
-    grid-column: 1 / -1;
     justify-self: stretch;
     width: 100%;
   }
 
   .queue-toolbar {
+    grid-column: 1 / -1;
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     justify-content: stretch;
@@ -8625,6 +8757,32 @@ html[data-theme="glow"] .queue-item__meta span:not(:first-child) {
 html[data-theme="glow"] .queue-item__source-tag {
   color: rgba(86, 92, 84, 0.82);
   border-left-color: rgba(112, 94, 76, 0.5);
+}
+
+html[data-theme="glow"] .button-small--ghost {
+  border-color: rgba(112, 94, 76, 0.3);
+}
+
+html[data-theme="glow"] .manual-add-panel__field > span {
+  color: rgba(86, 92, 84, 0.72);
+}
+
+html[data-theme="glow"] .manual-add-panel__error {
+  color: #c45454;
+}
+
+html[data-theme="glow"] .jira-search-result {
+  background: rgba(255, 247, 239, 0.86);
+  border-color: rgba(112, 94, 76, 0.12);
+  color: #223228;
+}
+
+html[data-theme="glow"] .jira-search-result__meta {
+  color: rgba(86, 92, 84, 0.76);
+}
+
+html[data-theme="glow"] .jira-search-panel__error {
+  color: #c45454;
 }
 
 html[data-theme="glow"] .queue-option-item {

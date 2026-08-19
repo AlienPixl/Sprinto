@@ -78,6 +78,8 @@ import {
   applyJiraIssueEstimate,
   postJiraIssueReport,
   previewJiraIssues,
+  searchJiraIssues,
+  importSearchedJiraIssues,
   prepareUserEntraMigration,
   cancelIssue,
 } from "./lib/api";
@@ -855,6 +857,17 @@ export function App() {
     return previewJiraIssues(boardId, sprintId, filters);
   }
 
+  async function handleSearchJiraIssues(query: string) {
+    return searchJiraIssues(query);
+  }
+
+  async function handleImportSearchedJiraIssues(roomId: string, issueKeys: string[]) {
+    const result = await importSearchedJiraIssues(roomId, issueKeys);
+    setSnapshot(result.snapshot);
+    await refreshRooms();
+    return result;
+  }
+
   async function handleFetchJiraAssignableUsers(roomId: string, issueId: string, query = "") {
     return listJiraAssignableUsers(roomId, issueId, query);
   }
@@ -1204,6 +1217,8 @@ export function App() {
             onImportJiraIssues={(payload) => handleImportJiraIssues(activeRoomId, payload)}
             onPostJiraIssueReport={(issueId, payload) => handlePostJiraIssueReport(activeRoomId, issueId, payload)}
             onPreviewJiraIssues={handlePreviewJiraIssues}
+            onSearchJiraIssues={handleSearchJiraIssues}
+            onImportSearchedJiraIssues={(issueKeys) => handleImportSearchedJiraIssues(activeRoomId, issueKeys)}
             onQueueIssue={handleQueueIssue}
             requireStoryId={Boolean(settings?.requireStoryId)}
             onReveal={handleReveal}

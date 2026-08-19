@@ -1,11 +1,12 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import JiraFilterEditor from "./JiraFilterEditor";
 import { LazyPicker } from "./LazyPicker";
-import { Issue, IssueEvent, IssueQueueItem, JiraAssignableUser, JiraBoard, JiraImportFilters, JiraImportPreviewIssue, JiraImportSyncResult, JiraIntegrationSettings, JiraSprint, JiraStatus, Participant, RoomCategory, RoomSnapshot, Vote } from "../lib/types";
+import { Issue, IssueEvent, IssueQueueItem, JiraAssignableUser, JiraBoard, JiraImportFilters, JiraImportPreviewIssue, JiraImportSyncResult, JiraSearchImportResult, JiraIntegrationSettings, JiraSprint, JiraStatus, Participant, RoomCategory, RoomSnapshot, Vote } from "../lib/types";
 
 type HighlightMode = "none" | "most-frequent" | "highest";
 type JiraSuggestionStrategy = "highest" | "most-frequent" | "median" | "average";
 const JIRA_AUTO_OPEN_STORAGE_KEY = "sprinto.jira.auto_open_after_reveal";
+const MANUAL_ADD_CLOSE_STORAGE_KEY = "sprinto.queue.close_after_manual_add";
 
 type AnimatedParticipant = {
   participant: Participant;
@@ -83,6 +84,8 @@ type RoomViewProps = {
   onFetchJiraStatuses: () => Promise<JiraStatus[]>;
   onFetchJiraLabels: () => Promise<string[]>;
   onPreviewJiraIssues: (boardId: string, sprintId: string | undefined, filters: JiraImportFilters) => Promise<JiraImportPreviewIssue[]>;
+  onSearchJiraIssues: (query: string) => Promise<JiraImportPreviewIssue[]>;
+  onImportSearchedJiraIssues: (issueKeys: string[]) => Promise<JiraSearchImportResult>;
   onImportJiraIssues: (payload: {
     boardId: string;
     sprintId?: string;
@@ -156,6 +159,8 @@ export function RoomView({
   onFetchJiraStatuses,
   onFetchJiraLabels,
   onPreviewJiraIssues,
+  onSearchJiraIssues,
+  onImportSearchedJiraIssues,
   onImportJiraIssues,
   onApplyJiraIssueEstimate,
   onFetchJiraAssignableUsers,
@@ -204,6 +209,25 @@ export function RoomView({
   const [jiraReimportOpen, setJiraReimportOpen] = useState(false);
   const [jiraReimportCompletedChoice, setJiraReimportCompletedChoice] = useState<"include" | "skip" | null>(null);
   const [jiraPreviewOpen, setJiraPreviewOpen] = useState(false);
+  const [manualAddOpen, setManualAddOpen] = useState(false);
+  const [manualAddError, setManualAddError] = useState("");
+  const [manualAddBusy, setManualAddBusy] = useState(false);
+  const [closeAfterManualAdd, setCloseAfterManualAdd] = useState(() => {
+    if (typeof window === "undefined") {
+      return false;
+    }
+    return window.localStorage.getItem(MANUAL_ADD_CLOSE_STORAGE_KEY) === "true";
+  });
+  const manualStoryIdRef = useRef<HTMLInputElement | null>(null);
+  const [jiraSearchOpen, setJiraSearchOpen] = useState(false);
+  const [jiraSearchQuery, setJiraSearchQuery] = useState("");
+  const [jiraSearchIssues, setJiraSearchIssues] = useState<JiraImportPreviewIssue[]>([]);
+  const [jiraSearchLoading, setJiraSearchLoading] = useState(false);
+  const [jiraSearchError, setJiraSearchError] = useState<string | null>(null);
+  const [jiraSearchPerformed, setJiraSearchPerformed] = useState(false);
+  const [jiraSearchSelection, setJiraSearchSelection] = useState<string[]>([]);
+  const [jiraSearchImporting, setJiraSearchImporting] = useState(false);
+  const lastJiraSearchQueryRef = useRef("");
   const [jiraBoards, setJiraBoards] = useState<JiraBoard[]>([]);
   const [jiraSprints, setJiraSprints] = useState<JiraSprint[]>([]);
   const [jiraStatuses, setJiraStatuses] = useState<JiraStatus[]>([]);
@@ -642,7 +666,7 @@ export function RoomView({
     () => summarizeJiraImportScope(snapshot, jiraBoardId, jiraSprintRequired ? jiraSprintId : ""),
     [jiraBoardId, jiraSprintId, jiraSprintRequired, snapshot]
   );
-  const isQueueOverlayOpen = jiraActionOpen || jiraOpen || historyOpen || roomSettingsOpen;
+  const isQueueOverlayOpen = jiraActionOpen || jiraOpen || jiraSearchOpen || manualAddOpen || historyOpen || roomSettingsOpen;
 
   function openExternalUrl(url?: string | null) {
     if (!url || typeof window === "undefined") return;
@@ -683,6 +707,8 @@ export function RoomView({
 
   function closeQueueOverlayPanels() {
     setJiraActionOpen(false);
+    setJiraSearchOpen(false);
+    setManualAddOpen(false);
     setJiraActionAssigneeOpen(false);
     setJiraOpen(false);
     setJiraPreviewOpen(false);
@@ -863,6 +889,10 @@ export function RoomView({
   }, [jiraActionAutoOpenAfterReveal]);
 
   useEffect(() => {
+    window.localStorage.setItem(MANUAL_ADD_CLOSE_STORAGE_KEY, closeAfterManualAdd ? "true" : "false");
+  }, [closeAfterManualAdd]);
+
+  useEffect(() => {
     updateQueueCapacity();
     updateHistoryCapacity();
   }, [isQueueOverlayOpen, queueDisplayItems.length, issuesForHistory.length, queueFilter, queueSort, updateQueueCapacity, updateHistoryCapacity]);
@@ -958,17 +988,57 @@ export function RoomView({
     };
   }, [isHistoryPreview]);
 
-  async function handleQueueIssue(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!queuedIssueTitle.trim()) {
+  function openManualAddPanel() {
+    if (manualAddOpen) {
+      closeManualAddPanel();
       return;
     }
-    if (requireStoryId && !queuedStoryId.trim()) {
-      return;
-    }
-    await onQueueIssue(queuedIssueTitle, queuedStoryId.trim());
+    closeQueueOverlayPanels();
+    setManualAddOpen(true);
+    setManualAddError("");
+  }
+
+  function closeManualAddPanel() {
+    setManualAddOpen(false);
+    setManualAddError("");
     setQueuedStoryId("");
     setQueuedIssueTitle("");
+  }
+
+  async function handleQueueIssue(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (manualAddBusy) {
+      return;
+    }
+    const title = queuedIssueTitle.trim();
+    const storyId = queuedStoryId.trim();
+    if (!title) {
+      setManualAddError("Title is required.");
+      return;
+    }
+    if (requireStoryId && !storyId) {
+      setManualAddError("Story ID is required.");
+      return;
+    }
+
+    setManualAddBusy(true);
+    setManualAddError("");
+    try {
+      await onQueueIssue(queuedIssueTitle, storyId);
+      setQueuedStoryId("");
+      setQueuedIssueTitle("");
+      if (closeAfterManualAdd) {
+        setJiraMessage(storyId ? `${storyId} added to the queue.` : "Issue added to the queue.");
+        setJiraMessageTone("success");
+        closeManualAddPanel();
+      } else {
+        manualStoryIdRef.current?.focus();
+      }
+    } catch (error) {
+      setManualAddError(error instanceof Error ? error.message : "Failed to add the issue.");
+    } finally {
+      setManualAddBusy(false);
+    }
   }
 
   async function handleStartQueuedIssue(issueId: string) {
@@ -1114,6 +1184,97 @@ export function RoomView({
       setJiraSprintsError(error instanceof Error ? error.message : "Failed to load Jira sprints.");
     } finally {
       setJiraSprintsLoading(false);
+    }
+  }
+
+  const roomJiraExternalIds = useMemo(() => {
+    const ids = new Set<string>();
+    const collect = (externalIssueId?: string) => {
+      if (externalIssueId) {
+        ids.add(String(externalIssueId));
+      }
+    };
+    collect(snapshot.room.currentIssue?.externalIssueId);
+    snapshot.room.issueQueue.forEach((issue) => collect(issue.externalIssueId));
+    snapshot.room.issueHistory.forEach((issue) => collect(issue.externalIssueId));
+    return ids;
+  }, [snapshot.room.currentIssue, snapshot.room.issueQueue, snapshot.room.issueHistory]);
+
+  function openJiraSearchPanel() {
+    if (jiraSearchOpen) {
+      closeJiraSearchPanel();
+      return;
+    }
+    closeQueueOverlayPanels();
+    setJiraSearchOpen(true);
+    setJiraSearchError(null);
+  }
+
+  function closeJiraSearchPanel() {
+    setJiraSearchOpen(false);
+  }
+
+  function resetJiraSearch() {
+    setJiraSearchQuery("");
+    setJiraSearchIssues([]);
+    setJiraSearchSelection([]);
+    setJiraSearchPerformed(false);
+    setJiraSearchError(null);
+    lastJiraSearchQueryRef.current = "";
+  }
+
+  // Searching costs a Jira request, so it never runs while typing — only on Enter or the button,
+  // and repeating the same query without editing it is a no-op.
+  async function runJiraSearch() {
+    const query = jiraSearchQuery.trim();
+    if (!query || jiraSearchLoading) {
+      return;
+    }
+    if (jiraSearchPerformed && lastJiraSearchQueryRef.current === query) {
+      return;
+    }
+    lastJiraSearchQueryRef.current = query;
+    setJiraSearchLoading(true);
+    setJiraSearchError(null);
+    try {
+      const issues = await onSearchJiraIssues(query);
+      setJiraSearchIssues(issues);
+      setJiraSearchSelection([]);
+      setJiraSearchPerformed(true);
+    } catch (error) {
+      setJiraSearchIssues([]);
+      setJiraSearchSelection([]);
+      setJiraSearchPerformed(false);
+      lastJiraSearchQueryRef.current = "";
+      setJiraSearchError(error instanceof Error ? error.message : "Failed to search Jira issues.");
+    } finally {
+      setJiraSearchLoading(false);
+    }
+  }
+
+  function toggleJiraSearchSelection(issueKey: string) {
+    setJiraSearchSelection((selection) =>
+      selection.includes(issueKey) ? selection.filter((key) => key !== issueKey) : [...selection, issueKey]
+    );
+  }
+
+  async function handleImportSearchedJiraIssues() {
+    if (jiraSearchSelection.length === 0 || jiraSearchImporting) {
+      return;
+    }
+    setJiraSearchImporting(true);
+    setJiraSearchError(null);
+    try {
+      const result = await onImportSearchedJiraIssues(jiraSearchSelection);
+      resetJiraSearch();
+      // The outcome goes to the queue notice bar, so closing the panel still reports what happened.
+      setJiraMessage(formatJiraSearchImportSummary(result));
+      setJiraMessageTone("success");
+      closeJiraSearchPanel();
+    } catch (error) {
+      setJiraSearchError(error instanceof Error ? error.message : "Failed to import Jira issues.");
+    } finally {
+      setJiraSearchImporting(false);
     }
   }
 
@@ -1656,25 +1817,16 @@ export function RoomView({
                 {!isQueueOverlayOpen && canManageRound ? (
                   <div className="queue-panel__default-content">
                     {snapshot.room.status !== "closed" ? (
-                    <form className="stack-form" onSubmit={handleQueueIssue}>
+                    <div className="stack-form">
                       <div className="queue-form-fields">
-                        <input
-                          aria-label="Story ID"
-                          className="queue-form-fields__story-id"
-                          placeholder="ID"
-                          value={queuedStoryId}
-                          onChange={(e) => setQueuedStoryId(e.target.value)}
-                        />
-                        <input
-                          aria-label="Add issue manually"
-                          className="queue-form-fields__title"
-                          placeholder="Add an issue manually"
-                          value={queuedIssueTitle}
-                          onChange={(e) => setQueuedIssueTitle(e.target.value)}
-                        />
-                        <button className="button-small" type="submit">
-                          Add to queue
+                        <button className="button-small" onClick={openManualAddPanel} type="button">
+                          Add manually
                         </button>
+                        {canImportJiraIssues ? (
+                          <button className="button-small button-small--ghost" onClick={openJiraSearchPanel} type="button">
+                            Find in Jira
+                          </button>
+                        ) : null}
                         <div className="queue-toolbar" aria-label="Queue filters and sorting">
                           <label className="queue-toolbar__control">
                             <span aria-hidden="true" className="queue-toolbar__icon">
@@ -1698,7 +1850,7 @@ export function RoomView({
                           </label>
                         </div>
                       </div>
-                    </form>
+                    </div>
                     ) : null}
                     <div className="queue-divider" />
                   </div>
@@ -2126,6 +2278,145 @@ export function RoomView({
                           type="button"
                         >
                           {jiraImportCooldown > 0 ? `Import issues (${jiraImportCooldown}s)` : "Import issues"}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : manualAddOpen ? (
+                  <div className="queue-jira-panel">
+                    <div className="queue-jira-panel__header">
+                      <div>
+                        <h3>Add issue manually</h3>
+                        <p>Type an issue that does not come from Jira. It joins the queue as a manual item.</p>
+                      </div>
+                    </div>
+
+                    <form className="manual-add-panel" onSubmit={handleQueueIssue}>
+                      <label className="manual-add-panel__field">
+                        <span>Story ID</span>
+                        <input
+                          aria-label="Story ID"
+                          className="queue-form-fields__story-id"
+                          placeholder="PROJ-12"
+                          ref={manualStoryIdRef}
+                          value={queuedStoryId}
+                          onChange={(event) => setQueuedStoryId(event.target.value)}
+                        />
+                      </label>
+                      <label className="manual-add-panel__field">
+                        <span>Issue title</span>
+                        <input
+                          aria-label="Issue title"
+                          placeholder="What needs estimating?"
+                          value={queuedIssueTitle}
+                          onChange={(event) => setQueuedIssueTitle(event.target.value)}
+                        />
+                      </label>
+
+                      <label className="manual-add-panel__option">
+                        <input
+                          aria-label="Close after adding"
+                          checked={closeAfterManualAdd}
+                          onChange={(event) => setCloseAfterManualAdd(event.target.checked)}
+                          type="checkbox"
+                        />
+                        <span>Close after adding</span>
+                      </label>
+
+                      {manualAddError ? <p className="manual-add-panel__error">{manualAddError}</p> : null}
+
+                      <div className="queue-jira-panel__actions">
+                        <button className="button-center" disabled={manualAddBusy} onClick={closeManualAddPanel} type="button">
+                          Close
+                        </button>
+                        <button className="button-center" disabled={manualAddBusy} type="submit">
+                          {manualAddBusy ? "Adding…" : "Add to queue"}
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                ) : jiraSearchOpen ? (
+                  <div className="queue-jira-panel">
+                    <div className="queue-jira-panel__header">
+                      <div>
+                        <h3>Find in Jira</h3>
+                        <p>Search any Jira issue by key or summary and add it to the queue, even from another sprint.</p>
+                      </div>
+                    </div>
+
+                    <div className="jira-search-panel">
+                      <div className="jira-search-panel__query">
+                        <input
+                          aria-label="Search Jira issues"
+                          placeholder="Issue key or summary…"
+                          value={jiraSearchQuery}
+                          onChange={(event) => setJiraSearchQuery(event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              void runJiraSearch();
+                            }
+                          }}
+                        />
+                        <button
+                          className="button-center"
+                          disabled={jiraSearchLoading || !jiraSearchQuery.trim()}
+                          onClick={() => void runJiraSearch()}
+                          type="button"
+                        >
+                          {jiraSearchLoading ? "Searching…" : "Search"}
+                        </button>
+                      </div>
+
+                      {jiraSearchError ? (
+                        <p className="jira-search-panel__error">{jiraSearchError}</p>
+                      ) : null}
+                      {!jiraSearchError && jiraSearchPerformed && jiraSearchIssues.length === 0 ? (
+                        <p className="settings-help settings-help--modal-spaced">No matching Jira issues were found.</p>
+                      ) : null}
+
+                      {jiraSearchIssues.length > 0 ? (
+                        <div className="jira-search-panel__results">
+                          {jiraSearchIssues.map((issue) => {
+                            const alreadyInRoom = roomJiraExternalIds.has(String(issue.id));
+                            return (
+                              <label
+                                className={`jira-search-result${alreadyInRoom ? " jira-search-result--disabled" : ""}`}
+                                key={issue.id}
+                              >
+                                <input
+                                  aria-label={`Select ${issue.key}`}
+                                  checked={jiraSearchSelection.includes(issue.key)}
+                                  disabled={alreadyInRoom || jiraSearchImporting}
+                                  onChange={() => toggleJiraSearchSelection(issue.key)}
+                                  type="checkbox"
+                                />
+                                <span className="jira-search-result__body">
+                                  <strong>{issue.key}</strong>
+                                  <span className="jira-search-result__title">{issue.title}</span>
+                                  <span className="jira-search-result__meta">
+                                    {[issue.issueType, issue.status, issue.priority?.name].filter(Boolean).join(" · ") || "—"}
+                                  </span>
+                                </span>
+                                {alreadyInRoom ? <span className="pill jira-search-result__tag">In queue</span> : null}
+                              </label>
+                            );
+                          })}
+                        </div>
+                      ) : null}
+
+                      <div className="queue-jira-panel__actions">
+                        <button className="button-center" disabled={jiraSearchImporting} onClick={closeJiraSearchPanel} type="button">
+                          Close
+                        </button>
+                        <button
+                          className="button-center"
+                          disabled={jiraSearchImporting || jiraSearchSelection.length === 0}
+                          onClick={() => void handleImportSearchedJiraIssues()}
+                          type="button"
+                        >
+                          {jiraSearchImporting ? "Adding…" : `Add ${jiraSearchSelection.length} to queue`}
                         </button>
                       </div>
                     </div>
@@ -2898,6 +3189,15 @@ function formatJiraImportSummary(result: JiraImportSyncResult) {
   }
 
   return `Jira import: ${parts.join(", ")}`;
+}
+
+function formatJiraSearchImportSummary(result: JiraSearchImportResult) {
+  const parts = [`${result.addedCount} added to the queue`];
+  if (result.skippedCount > 0) {
+    const listedKeys = result.skippedIssueKeys.slice(0, 3).filter(Boolean).join(", ");
+    parts.push(`${result.skippedCount} already in this room${listedKeys ? ` (${listedKeys})` : ""}`);
+  }
+  return `Jira search: ${parts.join(", ")}`;
 }
 
 function formatJiraBoardLabel(board: JiraBoard) {

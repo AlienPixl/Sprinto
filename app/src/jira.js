@@ -646,6 +646,85 @@ export async function listJiraSprintIssues(settings, options) {
   return listJiraIssues(settings, options);
 }
 
+const JIRA_ISSUE_SEARCH_LIMIT = 20;
+
+function buildImportIssueFields(storyPointsFieldId) {
+  return ["summary", "priority", "reporter", "timetracking", "issuetype", "status", "labels", storyPointsFieldId];
+}
+
+function quoteJqlValue(value) {
+  return `"${String(value).replace(/"/g, '\\"')}"`;
+}
+
+function normalizeIssueKeys(issueKeys) {
+  const keys = Array.isArray(issueKeys) ? issueKeys : [];
+  return [...new Set(keys.map((key) => String(key || "").trim().toUpperCase()).filter(Boolean))];
+}
+
+async function loadImportIssuesByKeys(jira, keys, storyPointsFieldId) {
+  const issues = await searchIssues(
+    jira,
+    `key in (${keys.map(quoteJqlValue).join(", ")})`,
+    buildImportIssueFields(storyPointsFieldId)
+  );
+  return sortImportedIssues(issues.map((issue) => mapImportedJiraIssue(issue, jira, storyPointsFieldId)));
+}
+
+// Ad-hoc lookup for issues outside the room's board/sprint scope. Import filters are
+// deliberately not applied here — bypassing them is the point of searching by hand.
+export async function searchJiraImportIssues(settings, query = "") {
+  const normalizedQuery = String(query || "").trim();
+  if (!normalizedQuery) {
+    return [];
+  }
+
+  const jira = ensureJiraConfigured(settings);
+  const storyPointsFieldId = await resolveStoryPointsFieldId(jira);
+  const exactIssueKeyMatch = normalizedQuery.toUpperCase().match(/^[A-Z][A-Z0-9_]*-\d+$/);
+
+  let pickerKeys = [];
+  try {
+    const picker = await jiraRequest(
+      jira,
+      `/rest/api/3/issue/picker?query=${encodeURIComponent(normalizedQuery)}&maxResults=${JIRA_ISSUE_SEARCH_LIMIT}`
+    );
+    const sectionIssues = Array.isArray(picker?.sections)
+      ? picker.sections.flatMap((section) => (Array.isArray(section?.issues) ? section.issues : []))
+      : [];
+    pickerKeys = sectionIssues.map((issue) => String(issue?.key || "")).filter(Boolean);
+  } catch {
+    pickerKeys = [];
+  }
+
+  const keys = normalizeIssueKeys([
+    ...(exactIssueKeyMatch ? [exactIssueKeyMatch[0]] : []),
+    ...pickerKeys,
+  ]).slice(0, JIRA_ISSUE_SEARCH_LIMIT);
+
+  if (keys.length > 0) {
+    return loadImportIssuesByKeys(jira, keys, storyPointsFieldId);
+  }
+
+  const issues = await searchIssues(
+    jira,
+    `summary ~ ${quoteJqlValue(normalizedQuery)} order by updated desc`,
+    buildImportIssueFields(storyPointsFieldId)
+  );
+  return sortImportedIssues(
+    issues.slice(0, JIRA_ISSUE_SEARCH_LIMIT).map((issue) => mapImportedJiraIssue(issue, jira, storyPointsFieldId))
+  );
+}
+
+export async function fetchJiraImportIssuesByKeys(settings, issueKeys) {
+  const keys = normalizeIssueKeys(issueKeys).slice(0, JIRA_ISSUE_SEARCH_LIMIT);
+  if (keys.length === 0) {
+    return [];
+  }
+  const jira = ensureJiraConfigured(settings);
+  const storyPointsFieldId = await resolveStoryPointsFieldId(jira);
+  return loadImportIssuesByKeys(jira, keys, storyPointsFieldId);
+}
+
 function formatOriginalEstimate(minutes) {
   const totalMinutes = Math.max(1, Number(minutes) || 0);
   const hours = Math.floor(totalMinutes / 60);

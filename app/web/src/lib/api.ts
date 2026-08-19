@@ -11,6 +11,7 @@ import {
   JiraImportFilters,
   JiraImportPreviewIssue,
   JiraImportSyncResult,
+  JiraSearchImportResult,
   JiraIssueLinkType,
   JiraSprint,
   JiraStatus,
@@ -446,6 +447,18 @@ export async function importJiraIssues(
   return request<JiraImportSyncResult>(`/api/rooms/${encodeURIComponent(roomId)}/jira/import`, {
     method: "POST",
     body: JSON.stringify(payload)
+  });
+}
+
+export async function searchJiraIssues(query: string): Promise<JiraImportPreviewIssue[]> {
+  const payload = await request<{ issues: JiraImportPreviewIssue[] }>(`/api/jira/issues/search?query=${encodeURIComponent(query)}`);
+  return payload.issues;
+}
+
+export async function importSearchedJiraIssues(roomId: string, issueKeys: string[]): Promise<JiraSearchImportResult> {
+  return request<JiraSearchImportResult>(`/api/rooms/${encodeURIComponent(roomId)}/jira/import-issues`, {
+    method: "POST",
+    body: JSON.stringify({ issueKeys })
   });
 }
 
