@@ -257,7 +257,7 @@ const {
   upsertSettings,
 } = await import("./store.js");
 const { resolveAuthenticatedUser } = await import("./login-flow.js");
-const { searchJiraImportIssues, fetchJiraImportIssuesByKeys, applyJiraEstimate } = await import("./jira.js");
+const { searchJiraImportIssues, fetchJiraImportIssuesByKeys, applyJiraEstimate, listJiraBoards } = await import("./jira.js");
 
 describe("server routes", () => {
   beforeEach(() => {
@@ -741,6 +741,42 @@ describe("server routes", () => {
     });
   });
 
+
+  describe("Jira failure responses", () => {
+    const jiraSettings = { ...mockSettings, integrations: { jira: { enabled: true } } };
+
+    function jiraFailure(message: string, retryable: boolean) {
+      return Object.assign(new Error(message), { retryable });
+    }
+
+    it("tells the client a credential failure is not worth retrying", async () => {
+      vi.mocked(getUserBySession).mockResolvedValue(mockJiraUser as any);
+      vi.mocked(getSettings).mockResolvedValue(jiraSettings as any);
+      vi.mocked(listJiraBoards).mockRejectedValue(
+        jiraFailure("Jira rejected the service account.", false)
+      );
+
+      const res = await request(app)
+        .get("/api/jira/boards")
+        .set("Authorization", "Bearer jira-token");
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("Jira rejected the service account.");
+      expect(res.body.retryable).toBe(false);
+    });
+
+    it("leaves an unexplained failure retryable", async () => {
+      vi.mocked(getUserBySession).mockResolvedValue(mockJiraUser as any);
+      vi.mocked(getSettings).mockResolvedValue(jiraSettings as any);
+      vi.mocked(listJiraBoards).mockRejectedValue(new Error("socket hang up"));
+
+      const res = await request(app)
+        .get("/api/jira/boards")
+        .set("Authorization", "Bearer jira-token");
+
+      expect(res.body.retryable).toBe(true);
+    });
+  });
 
   describe("GET /api/jira/issues/search", () => {
     const jiraSettings = { ...mockSettings, integrations: { jira: { enabled: true } } };

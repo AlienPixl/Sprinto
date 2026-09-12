@@ -1,6 +1,8 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { JiraAssignableUser, JiraIssueLinkType, JiraWorklogGroupBy, JiraWorklogIssue, JiraWorklogReport, JiraWorklogRequest, JiraWorklogRow } from "../lib/types";
 import type { WorklogExportPayload, WorklogExportFormat } from "../lib/worklog-export";
+import { formatDuration } from "../lib/worklog-format";
+import { WorklogCalendar } from "./WorklogCalendar";
 
 type WorklogViewProps = {
   onLoadIssue: (issueKey: string) => Promise<JiraWorklogIssue>;
@@ -8,8 +10,11 @@ type WorklogViewProps = {
   onLoadLinkTypes?: () => Promise<JiraIssueLinkType[]>;
   onLoadReport: (payload: JiraWorklogRequest) => Promise<JiraWorklogReport>;
   onLoadUsers: (query?: string) => Promise<JiraAssignableUser[]>;
+  /** Lets the shell lock itself to the window while the calendar is on screen. */
+  onResultsViewChange?: (view: "overview" | "calendar") => void;
 };
 
+type WorklogResultsView = "overview" | "calendar";
 type WorklogSortDirection = "asc" | "desc";
 type WorklogSortColumn = JiraWorklogGroupBy | "time";
 
@@ -99,13 +104,21 @@ function getWorklogPrincipalLookupKey(value: string, scopeType: JiraAssignableUs
   return `${scopeType === "group" ? "group" : "user"}:${String(value || "").trim()}`;
 }
 
-export function WorklogView({ onLoadIssue: _onLoadIssue, onLoadIssues, onLoadLinkTypes = async () => [], onLoadReport, onLoadUsers }: WorklogViewProps) {
+export function WorklogView({
+  onLoadIssue: _onLoadIssue,
+  onLoadIssues,
+  onLoadLinkTypes = async () => [],
+  onLoadReport,
+  onLoadUsers,
+  onResultsViewChange,
+}: WorklogViewProps) {
   const [request, setRequest] = useState<JiraWorklogRequest>(DEFAULT_REQUEST);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [report, setReport] = useState<JiraWorklogReport>({ rows: [] });
   const [activeChartLabel, setActiveChartLabel] = useState("");
   const [tableExpanded, setTableExpanded] = useState(false);
+  const [resultsView, setResultsView] = useState<WorklogResultsView>("overview");
   const [sortState, setSortState] = useState<WorklogSortState>({ column: "issue", direction: "asc" });
   const [issueSearch, setIssueSearch] = useState("");
   const [issuePickerOpen, setIssuePickerOpen] = useState(false);
@@ -119,6 +132,8 @@ export function WorklogView({ onLoadIssue: _onLoadIssue, onLoadIssues, onLoadLin
   const [userLookup, setUserLookup] = useState<Record<string, JiraAssignableUser>>({});
   const [usersLoading, setUsersLoading] = useState(false);
   const [usersSearched, setUsersSearched] = useState(false);
+  const [usersError, setUsersError] = useState("");
+  const [issuesError, setIssuesError] = useState("");
   const [linkedSettingsOpen, setLinkedSettingsOpen] = useState(false);
   const [linkTypes, setLinkTypes] = useState<JiraIssueLinkType[]>([]);
   const [linkTypesLoading, setLinkTypesLoading] = useState(false);
@@ -149,12 +164,15 @@ export function WorklogView({ onLoadIssue: _onLoadIssue, onLoadIssues, onLoadLin
 
     lastIssueQueryRef.current = normalizedSearch;
     setIssuesLoading(true);
+    setIssuesError("");
     setIssuePickerOpen(true);
     try {
       const nextIssues = await onLoadIssues(normalizedSearch);
       setIssueOptions(nextIssues);
-    } catch {
+    } catch (searchError) {
+      // A search that never ran is not a search that found nothing — say which it was.
       setIssueOptions([]);
+      setIssuesError(searchError instanceof Error ? searchError.message : "Failed to search Jira issues.");
     } finally {
       setIssuesSearched(true);
       setIssuesLoading(false);
@@ -169,6 +187,7 @@ export function WorklogView({ onLoadIssue: _onLoadIssue, onLoadIssues, onLoadLin
 
     lastUserQueryRef.current = normalizedSearch;
     setUsersLoading(true);
+    setUsersError("");
     setUserPickerOpen(true);
     try {
       const nextUsers = await onLoadUsers(normalizedSearch);
@@ -181,8 +200,9 @@ export function WorklogView({ onLoadIssue: _onLoadIssue, onLoadIssues, onLoadLin
           return [getWorklogPrincipalLookupKey(selectionKey, scopeType), user];
         })),
       }));
-    } catch {
+    } catch (searchError) {
       setUserOptions([]);
+      setUsersError(searchError instanceof Error ? searchError.message : "Failed to search Jira people and groups.");
     } finally {
       setUsersSearched(true);
       setUsersLoading(false);
@@ -408,6 +428,7 @@ export function WorklogView({ onLoadIssue: _onLoadIssue, onLoadIssues, onLoadLin
     setIssueOptions([]);
     setIssuesLoading(false);
     setIssuesSearched(false);
+    setIssuesError("");
     lastIssueQueryRef.current = "";
   }
 
@@ -416,6 +437,7 @@ export function WorklogView({ onLoadIssue: _onLoadIssue, onLoadIssues, onLoadLin
     setUserOptions([]);
     setUsersLoading(false);
     setUsersSearched(false);
+    setUsersError("");
     lastUserQueryRef.current = "";
   }
 
@@ -548,7 +570,7 @@ export function WorklogView({ onLoadIssue: _onLoadIssue, onLoadIssues, onLoadLin
   }
 
   return (
-    <div className="page-shell">
+    <div className={`page-shell ${resultsView === "calendar" ? "worklog-screen" : ""}`.trim()}>
       <section className="card worklog-report">
         <form className="worklog-toolbar" onSubmit={handleSubmit}>
           <div className="worklog-toolbar__row worklog-toolbar__row--primary">
@@ -577,7 +599,7 @@ export function WorklogView({ onLoadIssue: _onLoadIssue, onLoadIssues, onLoadLin
               <div className="worklog-issue-picker" ref={issuePickerRef}>
                 <div className="worklog-search-field">
                   <input
-                    placeholder="PROJ-123 nebo Mediox"
+                    placeholder="PROJ-123 or Mediox"
                     type="text"
                     value={issueSearch}
                     onChange={(event) => {
@@ -623,283 +645,312 @@ export function WorklogView({ onLoadIssue: _onLoadIssue, onLoadIssues, onLoadLin
                     {!issuesLoading && !issuesSearched && issueSearch.trim().length > 0 ? (
                       <div className="worklog-user-picker__empty">Press Enter to search</div>
                     ) : null}
-                    {!issuesLoading && issuesSearched && availableIssueOptions.length === 0 ? <div className="worklog-user-picker__empty">No issues found</div> : null}
+                    {!issuesLoading && issuesError ? (
+                      <div className="worklog-user-picker__empty worklog-user-picker__empty--error">{issuesError}</div>
+                    ) : null}
+                    {!issuesLoading && !issuesError && issuesSearched && availableIssueOptions.length === 0 ? <div className="worklog-user-picker__empty">No issues found</div> : null}
                     {!issuesLoading && availableIssueOptions.length > 0 ? (
                       <>
-                        <div className="worklog-issue-picker__header" aria-hidden="true">
-                          <span>ID</span>
-                          <span>Name</span>
-                          <span>Type</span>
-                        </div>
-                        {availableIssueOptions.map((issue) => (
-                          <button
-                            className="worklog-issue-option"
-                            key={getWorklogScopeLookupKey(issue.key, issue.scopeType)}
-                            onMouseDown={() => handleSelectIssue(issue)}
-                            type="button"
-                          >
-                            <strong>{issue.key}</strong>
-                            <span>{issue.title}</span>
-                            <span>{issue.issueType || (getWorklogScopeType(issue) === "project" ? "Project" : "-")}</span>
-                          </button>
-                        ))}
-                      </>
-                    ) : null}
-                  </div>
-                ) : null}
-              </div>
-            </label>
+                          <div className="worklog-issue-picker__header" aria-hidden="true">
+                            <span>ID</span>
+                            <span>Name</span>
+                            <span>Type</span>
+                          </div>
+                          {availableIssueOptions.map((issue) => (
+                            <button
+                              className="worklog-issue-option"
+                              key={getWorklogScopeLookupKey(issue.key, issue.scopeType)}
+                              onMouseDown={() => handleSelectIssue(issue)}
+                              type="button"
+                            >
+                              <strong>{issue.key}</strong>
+                              <span>{issue.title}</span>
+                              <span>{issue.issueType || (getWorklogScopeType(issue) === "project" ? "Project" : "-")}</span>
+                            </button>
+                          ))}
+                        </>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+              </label>
 
-            <div className="worklog-toolbar__field worklog-toolbar__field--users" ref={userPickerRef}>
-              <span>User or group</span>
-              <div className="worklog-user-picker">
-                <div className="worklog-search-field">
-                  <input
-                    placeholder="Find user or group"
-                    type="text"
-                    value={userSearch}
-                    onChange={(event) => {
-                      setUserSearch(event.target.value);
-                      setUserPickerOpen(true);
-                    }}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        void runUserSearch();
-                      }
-                    }}
-                    onBlur={() => window.setTimeout(() => clearUserSelection(), 120)}
-                    onFocus={() => setUserPickerOpen(true)}
-                  />
+              <div className="worklog-toolbar__field worklog-toolbar__field--users" ref={userPickerRef}>
+                <span>User or group</span>
+                <div className="worklog-user-picker">
+                  <div className="worklog-search-field">
+                    <input
+                      placeholder="Find user or group"
+                      type="text"
+                      value={userSearch}
+                      onChange={(event) => {
+                        setUserSearch(event.target.value);
+                        setUserPickerOpen(true);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          void runUserSearch();
+                        }
+                      }}
+                      onBlur={() => window.setTimeout(() => clearUserSelection(), 120)}
+                      onFocus={() => setUserPickerOpen(true)}
+                    />
+                    <button
+                      aria-label="Search users and groups"
+                      className="worklog-search-button"
+                      disabled={usersLoading}
+                      onClick={() => void runUserSearch()}
+                      title="Search users and groups"
+                      type="button"
+                    >
+                      {usersLoading ? <span className="lazy-picker__spinner" aria-hidden="true" /> : "⌕"}
+                    </button>
+                  </div>
+                  {showUserPicker ? (
+                    <div className="worklog-user-picker__menu">
+                      {usersLoading ? (
+                        <div className="lazy-picker__loading" role="status">
+                          <span className="lazy-picker__spinner" aria-hidden="true" />
+                          <span>Searching Jira…</span>
+                        </div>
+                      ) : null}
+                      {!usersLoading && !usersSearched ? (
+                        <div className="worklog-user-picker__empty">Press Enter to search people and groups</div>
+                      ) : null}
+                      {!usersLoading && usersError ? (
+                        <div className="worklog-user-picker__empty worklog-user-picker__empty--error">{usersError}</div>
+                      ) : null}
+                      {!usersLoading && !usersError && usersSearched && availableUserOptions.length === 0 ? (
+                        <div className="worklog-user-picker__empty">No people or groups found</div>
+                      ) : null}
+                      {!usersLoading && availableUserOptions.map((user) => (
+                        <button
+                          className="worklog-user-option"
+                          key={getWorklogPrincipalLookupKey(getWorklogPrincipalScopeType(user) === "group" ? user.groupId || "" : user.accountId, getWorklogPrincipalScopeType(user))}
+                          onMouseDown={() => handleSelectUser(user)}
+                          type="button"
+                        >
+                          <span className="avatar-circle worklog-user-option__avatar" aria-hidden="true">
+                            {user.avatarUrl ? <img alt="" src={user.avatarUrl} /> : getInitials(user.displayName)}
+                          </span>
+                          <span className="worklog-user-option__content">
+                            <strong>{user.displayName}</strong>
+                            <span>{getWorklogPrincipalScopeType(user) === "group" ? "Jira group" : (user.emailAddress || "Jira user")}</span>
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+
+              <label className="worklog-toolbar__field">
+                <span>Primary group</span>
+                <select
+                  value={grouping.primary}
+                  onChange={(event) => {
+                    const nextPrimary = event.target.value as JiraWorklogGroupBy;
+                    setRequest((current) => ({
+                      ...current,
+                      viewMode: viewModeFromGroupBy(nextPrimary),
+                      primaryGroupBy: nextPrimary,
+                      secondaryGroupBy: current.secondaryGroupBy === nextPrimary ? "" : current.secondaryGroupBy || "",
+                    }));
+                  }}
+                >
+                  {availablePrimaryGroups.map((groupBy) => (
+                    <option key={groupBy} value={groupBy}>
+                      {GROUP_BY_LABELS[groupBy]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="worklog-toolbar__field">
+                <span>Secondary group</span>
+                <select
+                  value={grouping.secondary}
+                  onChange={(event) =>
+                    setRequest((current) => ({
+                      ...current,
+                      secondaryGroupBy: event.target.value as JiraWorklogGroupBy | "",
+                    }))
+                  }
+                >
+                  <option value="">None</option>
+                  {availableSecondaryGroups.map((groupBy) => (
+                    <option key={groupBy} value={groupBy}>
+                      {GROUP_BY_LABELS[groupBy]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <div className="worklog-toolbar__field">
+                <span>Links</span>
+                <button
+                  aria-label={`Linked issues ${request.includeLinkedIssues ? `${request.linkedIssueTypeIds.length} selected` : "off"}`}
+                  className={`ghost-button worklog-link-settings-button ${request.includeLinkedIssues ? "is-active" : ""}`}
+                  onClick={openLinkedSettings}
+                  type="button"
+                >
+                  <strong>Linked issues</strong>
+                  <span>{request.includeLinkedIssues ? `${request.linkedIssueTypeIds.length} selected` : "Off"}</span>
+                </button>
+              </div>
+
+              <div className="worklog-toolbar__field worklog-toolbar__field--toggle">
+                <span>Epic</span>
+                <label className="settings-toggle worklog-toolbar__toggle-field">
                   <button
-                    aria-label="Search users and groups"
-                    className="worklog-search-button"
-                    disabled={usersLoading}
-                    onClick={() => void runUserSearch()}
-                    title="Search users and groups"
+                    aria-label="Epic - Include children"
+                    aria-pressed={request.includeEpicChildren}
+                    className={`toggle-switch ${request.includeEpicChildren ? "is-active" : ""}`}
+                    onClick={() => setRequest({ ...request, includeEpicChildren: !request.includeEpicChildren })}
                     type="button"
                   >
-                    {usersLoading ? <span className="lazy-picker__spinner" aria-hidden="true" /> : "⌕"}
+                    <span className="toggle-switch__knob" />
                   </button>
-                </div>
-                {showUserPicker ? (
-                  <div className="worklog-user-picker__menu">
-                    {usersLoading ? (
-                      <div className="lazy-picker__loading" role="status">
-                        <span className="lazy-picker__spinner" aria-hidden="true" />
-                        <span>Searching Jira…</span>
+                  <span>Include children</span>
+                </label>
+              </div>
+            </div>
+
+            <div className="worklog-toolbar__row worklog-toolbar__row--secondary">
+              <div className="worklog-toolbar__selection">
+                {selectedIssues.length > 0 || selectedUsers.length > 0 ? (
+                  <div className="worklog-selected-list">
+                    {selectedIssues.map((issue) => (
+                      <div className="worklog-selected-chip" key={getWorklogScopeLookupKey(issue.key, issue.scopeType)}>
+                        <div>
+                          <strong>{issue.key}</strong>
+                          <span>{issue.title}{issue.issueType ? ` · ${issue.issueType}` : ""}</span>
+                        </div>
+                        <button aria-label={`Remove ${issue.key}`} onClick={() => handleRemoveIssue(issue)} type="button">
+                          ×
+                        </button>
                       </div>
-                    ) : null}
-                    {!usersLoading && !usersSearched ? (
-                      <div className="worklog-user-picker__empty">Press Enter to search people and groups</div>
-                    ) : null}
-                    {!usersLoading && usersSearched && availableUserOptions.length === 0 ? (
-                      <div className="worklog-user-picker__empty">No people or groups found</div>
-                    ) : null}
-                    {!usersLoading && availableUserOptions.map((user) => (
-                      <button
-                        className="worklog-user-option"
+                    ))}
+                    {selectedUsers.map((user) => (
+                      <div
+                        className="worklog-selected-chip"
                         key={getWorklogPrincipalLookupKey(getWorklogPrincipalScopeType(user) === "group" ? user.groupId || "" : user.accountId, getWorklogPrincipalScopeType(user))}
-                        onMouseDown={() => handleSelectUser(user)}
-                        type="button"
                       >
-                        <span className="avatar-circle worklog-user-option__avatar" aria-hidden="true">
+                        <span className="avatar-circle worklog-selected-chip__avatar" aria-hidden="true">
                           {user.avatarUrl ? <img alt="" src={user.avatarUrl} /> : getInitials(user.displayName)}
                         </span>
-                        <span className="worklog-user-option__content">
+                        <div>
                           <strong>{user.displayName}</strong>
                           <span>{getWorklogPrincipalScopeType(user) === "group" ? "Jira group" : (user.emailAddress || "Jira user")}</span>
-                        </span>
-                      </button>
+                        </div>
+                        <button aria-label={`Remove ${user.displayName}`} onClick={() => handleRemoveUser(user)} type="button">
+                          ×
+                        </button>
+                      </div>
                     ))}
                   </div>
                 ) : null}
               </div>
+
+              <div className="worklog-toolbar__actions">
+                <div className="worklog-toolbar__buttons">
+                  <div className={`worklog-export-menu ${exportMenuOpen ? "is-open" : ""}`} ref={exportMenuRef}>
+                    <button
+                      aria-expanded={exportMenuOpen}
+                      aria-haspopup="menu"
+                      className="ghost-button worklog-export-button"
+                      disabled={groupedBlocks.length === 0 || Boolean(exportingFormat)}
+                      onClick={() => setExportMenuOpen((current) => !current)}
+                      type="button"
+                    >
+                      {exportingFormat ? `Exporting ${exportingFormat.toUpperCase()}...` : "Export"}
+                    </button>
+                    {exportMenuOpen ? (
+                      <div className="worklog-export-menu__popover" role="menu">
+                        <button className="worklog-export-menu__option" onClick={() => void handleExport("csv")} role="menuitem" type="button">
+                          <strong>CSV</strong>
+                        </button>
+                        <button className="worklog-export-menu__option" onClick={() => void handleExport("excel")} role="menuitem" type="button">
+                          <strong>Excel</strong>
+                        </button>
+                        <button className="worklog-export-menu__option" onClick={() => void handleExport("pdf")} role="menuitem" type="button">
+                          <strong>PDF</strong>
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                  <button className="ghost-button worklog-export-button" disabled={loading} type="submit">
+                    {loading ? "Loading..." : "View report"}
+                  </button>
+                </div>
+              </div>
             </div>
 
-            <label className="worklog-toolbar__field">
-              <span>Primary group</span>
-              <select
-                value={grouping.primary}
-                onChange={(event) => {
-                  const nextPrimary = event.target.value as JiraWorklogGroupBy;
-                  setRequest((current) => ({
-                    ...current,
-                    viewMode: viewModeFromGroupBy(nextPrimary),
-                    primaryGroupBy: nextPrimary,
-                    secondaryGroupBy: current.secondaryGroupBy === nextPrimary ? "" : current.secondaryGroupBy || "",
-                  }));
-                }}
-              >
-                {availablePrimaryGroups.map((groupBy) => (
-                  <option key={groupBy} value={groupBy}>
-                    {GROUP_BY_LABELS[groupBy]}
-                  </option>
-                ))}
-              </select>
-            </label>
+            {error ? <p className="settings-help">{error}</p> : null}
+          </form>
 
-            <label className="worklog-toolbar__field">
-              <span>Secondary group</span>
-              <select
-                value={grouping.secondary}
-                onChange={(event) =>
-                  setRequest((current) => ({
-                    ...current,
-                    secondaryGroupBy: event.target.value as JiraWorklogGroupBy | "",
-                  }))
-                }
-              >
-                <option value="">None</option>
-                {availableSecondaryGroups.map((groupBy) => (
-                  <option key={groupBy} value={groupBy}>
-                    {GROUP_BY_LABELS[groupBy]}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <div className="worklog-toolbar__field">
-              <span>Links</span>
-              <button
-                aria-label={`Linked issues ${request.includeLinkedIssues ? `${request.linkedIssueTypeIds.length} selected` : "off"}`}
-                className={`ghost-button worklog-link-settings-button ${request.includeLinkedIssues ? "is-active" : ""}`}
-                onClick={openLinkedSettings}
-                type="button"
-              >
-                <strong>Linked issues</strong>
-                <span>{request.includeLinkedIssues ? `${request.linkedIssueTypeIds.length} selected` : "Off"}</span>
-              </button>
-            </div>
-
-            <div className="worklog-toolbar__field worklog-toolbar__field--toggle">
-              <span>Epic</span>
-              <label className="settings-toggle worklog-toolbar__toggle-field">
+          <div className="worklog-results">
+            <div className="worklog-view-switch" role="group" aria-label="Report view">
+              {(["overview", "calendar"] as WorklogResultsView[]).map((view) => (
                 <button
-                  aria-label="Epic - Include children"
-                  aria-pressed={request.includeEpicChildren}
-                  className={`toggle-switch ${request.includeEpicChildren ? "is-active" : ""}`}
-                  onClick={() => setRequest({ ...request, includeEpicChildren: !request.includeEpicChildren })}
+                  aria-pressed={resultsView === view}
+                  className={`worklog-view-switch__option ${resultsView === view ? "is-active" : ""}`}
+                  key={view}
+                  onClick={() => {
+                  setResultsView(view);
+                  onResultsViewChange?.(view);
+                }}
                   type="button"
                 >
-                  <span className="toggle-switch__knob" />
+                  {view === "overview" ? "Overview" : "Calendar"}
                 </button>
-                <span>Include children</span>
-              </label>
-            </div>
-          </div>
-
-          <div className="worklog-toolbar__row worklog-toolbar__row--secondary">
-            <div className="worklog-toolbar__selection">
-              {selectedIssues.length > 0 || selectedUsers.length > 0 ? (
-                <div className="worklog-selected-list">
-                  {selectedIssues.map((issue) => (
-                    <div className="worklog-selected-chip" key={getWorklogScopeLookupKey(issue.key, issue.scopeType)}>
-                      <div>
-                        <strong>{issue.key}</strong>
-                        <span>{issue.title}{issue.issueType ? ` · ${issue.issueType}` : ""}</span>
-                      </div>
-                      <button aria-label={`Remove ${issue.key}`} onClick={() => handleRemoveIssue(issue)} type="button">
-                        ×
-                      </button>
-                    </div>
-                  ))}
-                  {selectedUsers.map((user) => (
-                    <div
-                      className="worklog-selected-chip"
-                      key={getWorklogPrincipalLookupKey(getWorklogPrincipalScopeType(user) === "group" ? user.groupId || "" : user.accountId, getWorklogPrincipalScopeType(user))}
-                    >
-                      <span className="avatar-circle worklog-selected-chip__avatar" aria-hidden="true">
-                        {user.avatarUrl ? <img alt="" src={user.avatarUrl} /> : getInitials(user.displayName)}
-                      </span>
-                      <div>
-                        <strong>{user.displayName}</strong>
-                        <span>{getWorklogPrincipalScopeType(user) === "group" ? "Jira group" : (user.emailAddress || "Jira user")}</span>
-                      </div>
-                      <button aria-label={`Remove ${user.displayName}`} onClick={() => handleRemoveUser(user)} type="button">
-                        ×
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              ) : null}
+              ))}
             </div>
 
-            <div className="worklog-toolbar__actions">
-              <div className="worklog-toolbar__buttons">
-                <div className={`worklog-export-menu ${exportMenuOpen ? "is-open" : ""}`} ref={exportMenuRef}>
-                  <button
-                    aria-expanded={exportMenuOpen}
-                    aria-haspopup="menu"
-                    className="ghost-button worklog-export-button"
-                    disabled={groupedBlocks.length === 0 || Boolean(exportingFormat)}
-                    onClick={() => setExportMenuOpen((current) => !current)}
-                    type="button"
-                  >
-                    {exportingFormat ? `Exporting ${exportingFormat.toUpperCase()}...` : "Export"}
-                  </button>
-                  {exportMenuOpen ? (
-                    <div className="worklog-export-menu__popover" role="menu">
-                      <button className="worklog-export-menu__option" onClick={() => void handleExport("csv")} role="menuitem" type="button">
-                        <strong>CSV</strong>
-                      </button>
-                      <button className="worklog-export-menu__option" onClick={() => void handleExport("excel")} role="menuitem" type="button">
-                        <strong>Excel</strong>
-                      </button>
-                      <button className="worklog-export-menu__option" onClick={() => void handleExport("pdf")} role="menuitem" type="button">
-                        <strong>PDF</strong>
-                      </button>
+            {resultsView === "calendar" ? (
+              <WorklogCalendar dateFrom={request.dateFrom} dateTo={request.dateTo} rows={report.rows} />
+            ) : (
+              <>
+                <div className="worklog-visuals">
+                  <div className="worklog-chart-card">
+                    <div className="worklog-results__stats">
+                      <span>{summaryText}</span>
                     </div>
-                  ) : null}
+                    <WorklogChart
+                      data={chartData}
+                      groupBy={grouping.primary}
+                      selectedLabel={activeChartLabel}
+                      onSelectionChange={setActiveChartLabel}
+                    />
+                  </div>
                 </div>
-                <button className="ghost-button worklog-export-button" disabled={loading} type="submit">
-                  {loading ? "Loading..." : "View report"}
+
+                <button
+                  aria-expanded={tableExpanded}
+                  aria-label={`${tableExpanded ? "Hide" : "Show"} worklog table, ${summary.totalEntries} entries`}
+                  className="worklog-table-toggle"
+                  disabled={groupedBlocks.length === 0}
+                  onClick={() => setTableExpanded((current) => !current)}
+                  type="button"
+                >
+                  <span>{tableExpanded ? "Hide worklog table" : "Show worklog table"}</span>
+                  <strong>{summary.totalEntries} entries</strong>
                 </button>
-              </div>
-            </div>
-          </div>
 
-          {error ? <p className="settings-help">{error}</p> : null}
-        </form>
-
-        <div className="worklog-results">
-          <div className="worklog-visuals">
-            <div className="worklog-chart-card">
-              <div className="worklog-results__stats">
-                <span>{summaryText}</span>
-              </div>
-              <WorklogChart
-                data={chartData}
-                groupBy={grouping.primary}
-                selectedLabel={activeChartLabel}
-                onSelectionChange={setActiveChartLabel}
-              />
-            </div>
-          </div>
-
-          <button
-            aria-expanded={tableExpanded}
-            aria-label={`${tableExpanded ? "Hide" : "Show"} worklog table, ${summary.totalEntries} entries`}
-            className="worklog-table-toggle"
-            disabled={groupedBlocks.length === 0}
-            onClick={() => setTableExpanded((current) => !current)}
-            type="button"
-          >
-            <span>{tableExpanded ? "Hide worklog table" : "Show worklog table"}</span>
-            <strong>{summary.totalEntries} entries</strong>
-          </button>
-
-          {tableExpanded ? (
-            <WorklogGroupedTable
-              activePrimaryLabel={activeChartLabel}
-              blocks={groupedBlocks}
-              columns={tableColumns}
-              onSortChange={setSortState}
-              showSourceColumn={hasLinkedData}
-              sortState={sortState}
-            />
-          ) : null}
+                {tableExpanded ? (
+                  <WorklogGroupedTable
+                    activePrimaryLabel={activeChartLabel}
+                    blocks={groupedBlocks}
+                    columns={tableColumns}
+                    onSortChange={setSortState}
+                    showSourceColumn={hasLinkedData}
+                    sortState={sortState}
+                  />
+                ) : null}
+              </>
+          )}
         </div>
       </section>
 
@@ -1640,20 +1691,6 @@ function WorklogPieChart({
       </text>
     </svg>
   );
-}
-
-function formatDuration(totalSeconds: number) {
-  const minutes = Math.round(totalSeconds / 60);
-  const hours = Math.floor(minutes / 60);
-  const remainingMinutes = minutes % 60;
-
-  if (hours === 0) {
-    return `${remainingMinutes}m`;
-  }
-  if (remainingMinutes === 0) {
-    return `${hours}h`;
-  }
-  return `${hours}h ${remainingMinutes}m`;
 }
 
 function formatShare(value: number, total: number) {

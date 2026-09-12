@@ -176,9 +176,20 @@ export function isJiraFilterGroup(node: JiraFilterNode): node is JiraFilterGroup
   return (node as JiraFilterGroup).type === "group";
 }
 
+export type JiraStatusProject = {
+  key: string;
+  name: string;
+};
+
 export type JiraStatus = {
   id: string;
   name: string;
+  /**
+   * Projects that use this status. Team-managed projects each own a private copy, so
+   * several statuses can share a name and differ only by id. Empty or missing when the
+   * scope could not be established, in which case the picker stays flat.
+   */
+  projects?: JiraStatusProject[];
 };
 
 export type JiraImportFilters = {

@@ -79,3 +79,33 @@ describe("LazyPicker", () => {
     expect(screen.queryByRole("listbox")).toBeNull();
   });
 });
+
+describe("LazyPicker retry offer", () => {
+  function openWithError(overrides: Record<string, unknown>) {
+    renderPicker({ options: [], error: "Something went wrong.", onRetry: vi.fn(), ...overrides });
+    fireEvent.click(screen.getByRole("button", { name: /Select board/ }));
+  }
+
+  it("offers a retry for a failure that might pass", () => {
+    openWithError({ canRetry: true });
+
+    expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
+  });
+
+  it("hides the retry when trying again could never help", () => {
+    openWithError({
+      canRetry: false,
+      error: "Jira rejected the service account. Ask an administrator to check the account email and API token in the Jira integration settings.",
+    });
+
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+    // The advice must still be readable.
+    expect(screen.getByText(/Ask an administrator/)).toBeTruthy();
+  });
+
+  it("keeps offering a retry when nothing says otherwise", () => {
+    openWithError({});
+
+    expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
+  });
+});

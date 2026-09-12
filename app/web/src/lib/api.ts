@@ -40,6 +40,23 @@ function authHeaders() {
   return token ? ({ Authorization: `Bearer ${token}` } as Record<string, string>) : {};
 }
 
+/**
+ * Carries whether the server thinks another attempt could succeed, so the UI can stop
+ * offering a retry that would fail the same way every time. Extends Error, so every
+ * existing `error instanceof Error ? error.message : …` site keeps working.
+ */
+export class ApiError extends Error {
+  readonly status: number;
+  readonly retryable: boolean;
+
+  constructor(message: string, status: number, retryable: boolean) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.retryable = retryable;
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -54,10 +71,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   if (!response.ok) {
     let errorMessage = `Request failed: ${response.status}`;
+    let retryable = true;
     try {
-      const payload = await response.json() as { error?: string };
+      const payload = await response.json() as { error?: string; retryable?: boolean };
       if (payload?.error) {
         errorMessage = payload.error;
+      }
+      if (payload?.retryable === false) {
+        retryable = false;
       }
     } catch {
       try {
@@ -69,11 +90,15 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     }
     if (response.status === 429) {
       // Rate limited — say so plainly instead of surfacing a bare status code.
-      throw new Error(errorMessage.startsWith("Request failed")
-        ? "Too many requests. Please wait a moment and try again."
-        : errorMessage);
+      throw new ApiError(
+        errorMessage.startsWith("Request failed")
+          ? "Too many requests. Please wait a moment and try again."
+          : errorMessage,
+        response.status,
+        retryable
+      );
     }
-    throw new Error(errorMessage);
+    throw new ApiError(errorMessage, response.status, retryable);
   }
 
   return response.json() as Promise<T>;

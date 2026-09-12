@@ -22,6 +22,12 @@ const SPRINTS_TTL_MS = 2 * 60_000;
 const STATUSES_TTL_MS = 10 * 60_000;
 const LABELS_TTL_MS = 10 * 60_000;
 const LINK_TYPES_TTL_MS = 30 * 60_000;
+const SESSION_TTL_MS = 60_000;
+
+// Statuses are scoped by walking projects one request at a time, so the work is capped
+// and spread out rather than issued all at once.
+const PROJECT_STATUS_SCOPE_LIMIT = 100;
+const PROJECT_STATUS_SCOPE_CONCURRENCY = 5;
 
 function normalizeBaseUrl(baseUrl) {
   return String(baseUrl || "").trim().replace(/\/+$/, "");
@@ -54,6 +60,80 @@ function ensureJiraConfigured(settings) {
   };
 }
 
+/**
+ * Jira answers a wrong password and a passing outage with the same shape. Telling them
+ * apart is what lets the UI stop offering a retry that could never succeed, and say
+ * something the reader can act on instead of a bare status code.
+ */
+export class JiraRequestError extends Error {
+  constructor(message, { status, retryable }) {
+    super(message);
+    this.name = "JiraRequestError";
+    this.status = status;
+    this.retryable = retryable;
+  }
+}
+
+/** Whatever Jira itself said about the failure, if anything usable. */
+function jiraFailureDetail(payload) {
+  const messages = Array.isArray(payload?.errorMessages)
+    ? payload.errorMessages.map((entry) => String(entry || "").trim()).filter(Boolean)
+    : [];
+  if (messages.length > 0) {
+    return messages.join(" ");
+  }
+  const errors = payload?.errors;
+  if (errors && typeof errors === "object" && Object.keys(errors).length > 0) {
+    return JSON.stringify(errors);
+  }
+  return "";
+}
+
+function describeJiraFailure(status, payload) {
+  const detail = jiraFailureDetail(payload);
+
+  // The reader of these messages is usually a room member who cannot open the admin
+  // settings, so anything they cannot fix themselves points at an administrator.
+  if (status === 401) {
+    return {
+      retryable: false,
+      message:
+        "Jira rejected the service account. Ask an administrator to check the account email "
+        + "and API token in the Jira integration settings.",
+    };
+  }
+  if (status === 403) {
+    return {
+      retryable: false,
+      message:
+        "The Jira service account is not allowed to do this. Ask an administrator to widen "
+        + "its permissions in Jira.",
+    };
+  }
+  if (status === 404) {
+    return {
+      retryable: false,
+      message: detail || "Jira could not find what was requested.",
+    };
+  }
+  if (status === 429) {
+    return {
+      retryable: true,
+      message: "Jira is limiting how often this site may be called. Wait a moment and try again.",
+    };
+  }
+  if (status >= 500) {
+    return {
+      retryable: true,
+      message: "Jira is temporarily unavailable. Try again in a moment.",
+    };
+  }
+  return {
+    retryable: true,
+    message: `Jira request failed with status ${status}.${detail ? ` ${detail}` : ""}`,
+  };
+}
+
 async function jiraRequest(settings, pathname, options = {}) {
   const jira = ensureJiraConfigured(settings);
   const response = await fetch(`${jira.baseUrl}${pathname}`, {
@@ -67,15 +147,13 @@ async function jiraRequest(settings, pathname, options = {}) {
   });
 
   if (!response.ok) {
-    let message = `Jira request failed with status ${response.status}.`;
+    let payload = null;
     try {
-      const payload = await response.json();
-      message = payload?.errorMessages?.join(" ") || payload?.errors
-        ? `${message} ${JSON.stringify(payload.errors || {})}`.trim()
-        : message;
+      payload = await response.json();
     } catch {
     }
-    throw new Error(message);
+    const { message, retryable } = describeJiraFailure(response.status, payload);
+    throw new JiraRequestError(message, { status: response.status, retryable });
   }
 
   if (options.expectEmpty) {
@@ -387,6 +465,10 @@ export async function listJiraWorklogUsers(settings, search = "") {
   const uniqueUsers = [...new Map(users.map((user) => [user.accountId, user])).values()]
     .sort((left, right) => left.displayName.localeCompare(right.displayName));
 
+  if (uniqueGroups.length === 0 && uniqueUsers.length === 0) {
+    await assertJiraSession(jira);
+  }
+
   return [...uniqueGroups, ...uniqueUsers];
 }
 
@@ -398,6 +480,9 @@ export async function listJiraIssueLinkTypes(settings) {
 async function fetchJiraIssueLinkTypes(jira) {
   const payload = await jiraRequest(jira, "/rest/api/3/issueLinkType");
   const values = Array.isArray(payload?.issueLinkTypes) ? payload.issueLinkTypes : [];
+  if (values.length === 0) {
+    await assertJiraSession(jira);
+  }
   return values
     .map((type) => ({
       id: String(type?.id || type?.name || ""),
@@ -583,16 +668,138 @@ function mapImportedJiraIssue(issue, jira, storyPointsFieldId) {
   };
 }
 
+/**
+ * Several Jira endpoints answer an unauthenticated caller with 200 and an empty list
+ * rather than 401 — user search, the group picker, the status list and issue link types
+ * all do. An empty result is therefore ambiguous: either nothing matched, or nobody is
+ * signed in. Only /myself tells the two apart, so it is consulted before an empty result
+ * is passed on as genuine.
+ *
+ * The verdict is cached briefly, and `withJiraCache` never caches a failure, so
+ * corrected credentials take effect on the next attempt.
+ */
+async function assertJiraSession(jira) {
+  await withJiraCache(buildJiraCacheKey(jira, "session"), SESSION_TTL_MS, async () => {
+    await jiraRequest(jira, "/rest/api/3/myself");
+    return true;
+  });
+}
+
 export async function getJiraStatuses(settings) {
   const jira = ensureJiraConfigured(settings);
   return withJiraCache(buildJiraCacheKey(jira, "statuses"), STATUSES_TTL_MS, () => fetchJiraStatuses(jira));
 }
 
-async function fetchJiraStatuses(jira) {
+async function fetchGlobalJiraStatuses(jira) {
   const result = await jiraRequest(jira, "/rest/api/2/status");
   return Array.isArray(result)
     ? result.map((s) => ({ id: String(s.id), name: String(s.name || "") }))
     : [];
+}
+
+/**
+ * Lists the projects the service account may browse. Jira only ever returns projects the
+ * caller has permission to see, so this doubles as the access check.
+ */
+async function fetchAccessibleProjects(jira) {
+  const projects = [];
+  let startAt = 0;
+
+  while (startAt < 1000) {
+    const params = new URLSearchParams({ startAt: String(startAt), maxResults: "100" });
+    const page = await jiraRequest(jira, `/rest/api/3/project/search?${params.toString()}`);
+    const values = Array.isArray(page?.values) ? page.values : [];
+    for (const value of values) {
+      const key = String(value?.key || "").trim();
+      if (key) {
+        projects.push({ key, name: String(value?.name || key) });
+      }
+    }
+    if (page?.isLast === true || values.length === 0) {
+      break;
+    }
+    startAt += values.length;
+  }
+
+  if (projects.length === 0) {
+    await assertJiraSession(jira);
+  }
+
+  return projects;
+}
+
+/** Status ids one project uses, collected across every issue type it defines. */
+async function fetchProjectStatusIds(jira, projectKey) {
+  const issueTypes = await jiraRequest(
+    jira,
+    `/rest/api/2/project/${encodeURIComponent(projectKey)}/statuses`
+  );
+  const ids = new Set();
+  for (const issueType of Array.isArray(issueTypes) ? issueTypes : []) {
+    for (const status of Array.isArray(issueType?.statuses) ? issueType.statuses : []) {
+      const id = String(status?.id || "").trim();
+      if (id) {
+        ids.add(id);
+      }
+    }
+  }
+  return ids;
+}
+
+/**
+ * Company-managed projects share a single set of statuses, while every team-managed
+ * project owns a private copy. That is why one instance can offer four different
+ * statuses all named "Done" — knowing which projects use a status is what lets the
+ * picker tell those copies apart.
+ *
+ * Scoping is best effort. It costs one request per project, so it is skipped on very
+ * large instances and abandoned whenever Jira will not answer; the plain list is
+ * always returned rather than an error.
+ */
+async function fetchJiraStatuses(jira) {
+  const statuses = (await fetchGlobalJiraStatuses(jira)).map((status) => ({ ...status, projects: [] }));
+
+  if (statuses.length === 0) {
+    await assertJiraSession(jira);
+    return statuses;
+  }
+
+  let projects = [];
+  try {
+    projects = await fetchAccessibleProjects(jira);
+  } catch {
+    return statuses;
+  }
+
+  if (projects.length === 0 || projects.length > PROJECT_STATUS_SCOPE_LIMIT) {
+    return statuses;
+  }
+
+  const byId = new Map(statuses.map((status) => [status.id, status]));
+  const queue = [...projects];
+
+  await Promise.all(
+    Array.from({ length: Math.min(PROJECT_STATUS_SCOPE_CONCURRENCY, queue.length) }, async () => {
+      while (queue.length > 0) {
+        const project = queue.shift();
+        let statusIds;
+        try {
+          statusIds = await fetchProjectStatusIds(jira, project.key);
+        } catch {
+          continue;
+        }
+        for (const id of statusIds) {
+          byId.get(id)?.projects.push({ key: project.key, name: project.name });
+        }
+      }
+    })
+  );
+
+  for (const status of statuses) {
+    status.projects.sort((left, right) => left.name.localeCompare(right.name));
+  }
+
+  return statuses;
 }
 
 export async function getJiraLabels(settings) {

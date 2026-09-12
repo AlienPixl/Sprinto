@@ -7,6 +7,7 @@ import {
   createIssueReportComment,
   createSimplePdfBuffer,
   getJiraLabels,
+  getJiraStatuses,
   listJiraAssignableUsers,
   listJiraBoards,
   listJiraIssues,
@@ -18,6 +19,7 @@ import {
   searchJiraWorklogIssues,
   fetchJiraImportIssuesByKeys,
 } from "./jira.js";
+import { clearJiraCache } from "./jira-cache.js";
 
 const settings = {
   integrations: {
@@ -1364,5 +1366,295 @@ describe("jira helpers", () => {
 
     expect(await fetchJiraImportIssuesByKeys(settings, [])).toEqual([]);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("jira status project scope", () => {
+  const site = "https://example.atlassian.net";
+
+  // Routes by path prefix so the assertions do not depend on call order.
+  function routeJira(routes: Record<string, unknown>) {
+    return vi.fn(async (url: unknown) => {
+      const path = String(url).slice(site.length);
+      const hit = Object.keys(routes).find((prefix) => path.startsWith(prefix));
+      if (!hit) {
+        return { ok: false, status: 404, json: async () => ({}) };
+      }
+      return { ok: true, json: async () => routes[hit] };
+    });
+  }
+
+  const globalStatuses = [
+    { id: "1", name: "To Do" },
+    { id: "3", name: "In Progress" },
+    { id: "10001", name: "Done" },
+    { id: "13413", name: "Done" },
+    { id: "13417", name: "Done" },
+  ];
+
+  const projectSearch = {
+    isLast: true,
+    values: [
+      { key: "OPS", name: "Operations" },
+      { key: "WEB", name: "Web" },
+      { key: "MKT", name: "Marketing" },
+    ],
+  };
+
+  beforeEach(() => {
+    clearJiraCache();
+  });
+
+  it("attaches the projects that own each status", async () => {
+    vi.stubGlobal("fetch", routeJira({
+      "/rest/api/2/status": globalStatuses,
+      "/rest/api/3/project/search": projectSearch,
+      // OPS and WEB are company-managed and share the same global statuses.
+      "/rest/api/2/project/OPS/statuses": [{ statuses: [{ id: "1" }, { id: "10001" }] }],
+      "/rest/api/2/project/WEB/statuses": [{ statuses: [{ id: "1" }, { id: "10001" }] }],
+      // MKT is team-managed and owns a private copy of "Done".
+      "/rest/api/2/project/MKT/statuses": [{ statuses: [{ id: "13413" }] }],
+    }) as unknown as typeof fetch);
+
+    const statuses = await getJiraStatuses(settings);
+    const byId = new Map(statuses.map((status) => [status.id, status]));
+
+    expect(byId.get("13413")?.projects).toEqual([{ key: "MKT", name: "Marketing" }]);
+    expect(byId.get("10001")?.projects).toEqual([
+      { key: "OPS", name: "Operations" },
+      { key: "WEB", name: "Web" },
+    ]);
+  });
+
+  it("leaves projects empty for a status no accessible project uses", async () => {
+    vi.stubGlobal("fetch", routeJira({
+      "/rest/api/2/status": globalStatuses,
+      "/rest/api/3/project/search": projectSearch,
+      "/rest/api/2/project/OPS/statuses": [{ statuses: [{ id: "1" }] }],
+      "/rest/api/2/project/WEB/statuses": [{ statuses: [{ id: "1" }] }],
+      "/rest/api/2/project/MKT/statuses": [{ statuses: [{ id: "1" }] }],
+    }) as unknown as typeof fetch);
+
+    const statuses = await getJiraStatuses(settings);
+
+    expect(statuses.find((status) => status.id === "13417")?.projects).toEqual([]);
+  });
+
+  it("counts a status once even when many projects report it", async () => {
+    vi.stubGlobal("fetch", routeJira({
+      "/rest/api/2/status": globalStatuses,
+      "/rest/api/3/project/search": projectSearch,
+      "/rest/api/2/project/OPS/statuses": [{ statuses: [{ id: "10001" }] }, { statuses: [{ id: "10001" }] }],
+      "/rest/api/2/project/WEB/statuses": [{ statuses: [{ id: "10001" }] }],
+      "/rest/api/2/project/MKT/statuses": [{ statuses: [] }],
+    }) as unknown as typeof fetch);
+
+    const statuses = await getJiraStatuses(settings);
+
+    expect(statuses.filter((status) => status.id === "10001")).toHaveLength(1);
+    expect(statuses.find((status) => status.id === "10001")?.projects).toEqual([
+      { key: "OPS", name: "Operations" },
+      { key: "WEB", name: "Web" },
+    ]);
+  });
+
+  it("keeps the flat list when the project lookup fails", async () => {
+    vi.stubGlobal("fetch", routeJira({
+      "/rest/api/2/status": globalStatuses,
+      // no /rest/api/3/project/search route -> the lookup throws
+    }) as unknown as typeof fetch);
+
+    const statuses = await getJiraStatuses(settings);
+
+    expect(statuses).toHaveLength(globalStatuses.length);
+    expect(statuses.every((status) => status.projects.length === 0)).toBe(true);
+  });
+
+  it("skips scoping on instances with more projects than the cap", async () => {
+    const many = Array.from({ length: 101 }, (_, index) => ({
+      key: `P${index}`,
+      name: `Project ${index}`,
+    }));
+    const fetchMock = routeJira({
+      "/rest/api/2/status": globalStatuses,
+      "/rest/api/3/project/search": { isLast: true, values: many },
+    });
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    const statuses = await getJiraStatuses(settings);
+
+    expect(statuses.every((status) => status.projects.length === 0)).toBe(true);
+    const perProjectCalls = fetchMock.mock.calls.filter((call) =>
+      String(call[0]).includes("/statuses")
+    );
+    expect(perProjectCalls).toHaveLength(0);
+  });
+
+  it("still returns a status when one project lookup fails", async () => {
+    vi.stubGlobal("fetch", routeJira({
+      "/rest/api/2/status": globalStatuses,
+      "/rest/api/3/project/search": projectSearch,
+      "/rest/api/2/project/OPS/statuses": [{ statuses: [{ id: "10001" }] }],
+      "/rest/api/2/project/MKT/statuses": [{ statuses: [{ id: "13413" }] }],
+      // WEB has no route and therefore fails
+    }) as unknown as typeof fetch);
+
+    const statuses = await getJiraStatuses(settings);
+
+    expect(statuses.find((status) => status.id === "10001")?.projects).toEqual([
+      { key: "OPS", name: "Operations" },
+    ]);
+    expect(statuses.find((status) => status.id === "13413")?.projects).toEqual([
+      { key: "MKT", name: "Marketing" },
+    ]);
+  });
+});
+
+describe("jira failure messages", () => {
+  function respondWith(status: number, payload: unknown = {}) {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: false,
+      status,
+      json: async () => payload,
+    }) as unknown as typeof fetch);
+  }
+
+  async function failureOf(status: number, payload?: unknown) {
+    respondWith(status, payload);
+    try {
+      await listJiraBoards(settings);
+    } catch (error) {
+      return error as Error & { retryable?: boolean; status?: number };
+    }
+    throw new Error(`expected a failure for status ${status}`);
+  }
+
+  it("points at the service account when Jira rejects the credentials", async () => {
+    const error = await failureOf(401, {
+      errorMessages: ["Client must be authenticated to access this resource."],
+    });
+
+    expect(error.message).toMatch(/service account/i);
+    expect(error.message).toMatch(/API token/i);
+    // Jira's own wording gives the reader nothing to act on.
+    expect(error.message).not.toMatch(/Client must be authenticated/);
+  });
+
+  it("does not offer a retry for a credential failure", async () => {
+    expect((await failureOf(401)).retryable).toBe(false);
+  });
+
+  it("points at permissions when Jira accepts the account but refuses the call", async () => {
+    const error = await failureOf(403);
+
+    expect(error.message).toMatch(/permission|allowed/i);
+    expect(error.retryable).toBe(false);
+  });
+
+  it("does not offer a retry when Jira found nothing", async () => {
+    expect((await failureOf(404)).retryable).toBe(false);
+  });
+
+  it("keeps a rate limit worth retrying", async () => {
+    const error = await failureOf(429);
+
+    expect(error.message).toMatch(/wait|often|limit/i);
+    expect(error.retryable).toBe(true);
+  });
+
+  it("keeps an outage worth retrying", async () => {
+    const error = await failureOf(503);
+
+    expect(error.message).toMatch(/unavailable/i);
+    expect(error.retryable).toBe(true);
+  });
+
+  it("keeps Jira's own detail for a status it has no advice for", async () => {
+    const error = await failureOf(400, { errorMessages: ["Board id must be a number."] });
+
+    expect(error.message).toContain("Board id must be a number.");
+    expect(error.retryable).toBe(true);
+  });
+
+  it("reports field errors when Jira sends no message", async () => {
+    const error = await failureOf(400, { errors: { boardId: "is required" } });
+
+    expect(error.message).toContain("boardId");
+  });
+});
+
+describe("jira anonymous degradation", () => {
+  const site = "https://example.atlassian.net";
+
+  // Jira answers an unauthenticated caller with 200 and an empty list on several
+  // endpoints, so the fixtures below mimic that rather than a 401.
+  function routeJira(routes: Record<string, { status?: number; body: unknown }>) {
+    return vi.fn(async (url: unknown) => {
+      const path = String(url).slice(site.length);
+      const hit = Object.keys(routes).find((prefix) => path.startsWith(prefix));
+      if (!hit) {
+        return { ok: false, status: 404, json: async () => ({}) };
+      }
+      const { status = 200, body } = routes[hit];
+      return { ok: status < 400, status, json: async () => body };
+    });
+  }
+
+  const signedOut = { status: 401, body: { errorMessages: ["Client must be authenticated to access this resource."] } };
+
+  beforeEach(() => {
+    clearJiraCache();
+  });
+
+  it("reports the credential problem when a people search comes back empty", async () => {
+    vi.stubGlobal("fetch", routeJira({
+      "/rest/api/3/user/search": { body: [] },
+      "/rest/api/3/groups/picker": { body: { groups: [] } },
+      "/rest/api/3/myself": signedOut,
+    }) as unknown as typeof fetch);
+
+    await expect(listJiraWorklogUsers(settings, "janecek")).rejects.toThrow(/service account/i);
+  });
+
+  it("still reports a genuinely empty people search as empty", async () => {
+    vi.stubGlobal("fetch", routeJira({
+      "/rest/api/3/user/search": { body: [] },
+      "/rest/api/3/groups/picker": { body: { groups: [] } },
+      "/rest/api/3/myself": { body: { accountId: "abc" } },
+    }) as unknown as typeof fetch);
+
+    await expect(listJiraWorklogUsers(settings, "nobody")).resolves.toEqual([]);
+  });
+
+  it("does not spend a request checking the session when people were found", async () => {
+    const fetchMock = routeJira({
+      "/rest/api/3/user/search": { body: [{ accountId: "1", displayName: "Martin", active: true, accountType: "atlassian" }] },
+      "/rest/api/3/groups/picker": { body: { groups: [] } },
+      "/rest/api/3/myself": { body: { accountId: "abc" } },
+    });
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    await listJiraWorklogUsers(settings, "martin");
+
+    expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/myself"))).toBe(false);
+  });
+
+  it("reports the credential problem when the status list comes back empty", async () => {
+    vi.stubGlobal("fetch", routeJira({
+      "/rest/api/2/status": { body: [] },
+      "/rest/api/3/myself": signedOut,
+    }) as unknown as typeof fetch);
+
+    await expect(getJiraStatuses(settings)).rejects.toThrow(/service account/i);
+  });
+
+  it("accepts a site that genuinely defines no statuses", async () => {
+    vi.stubGlobal("fetch", routeJira({
+      "/rest/api/2/status": { body: [] },
+      "/rest/api/3/myself": { body: { accountId: "abc" } },
+      "/rest/api/3/project/search": { body: { isLast: true, values: [] } },
+    }) as unknown as typeof fetch);
+
+    await expect(getJiraStatuses(settings)).resolves.toEqual([]);
   });
 });

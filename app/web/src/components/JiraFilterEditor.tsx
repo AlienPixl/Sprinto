@@ -91,6 +91,27 @@ function appendNode(root: GroupLike, groupPath: NodePath, node: JiraFilterNode):
   }));
 }
 
+/**
+ * Swaps a node with its neighbour inside the same group.
+ *
+ * The connectors deliberately keep their slots. Conditions are evaluated strictly left
+ * to right with no operator precedence, so the run of AND/OR *is* the shape of the
+ * expression — moving a row rearranges the operands within that shape instead of
+ * rewriting it, which is the only reading that stays predictable.
+ */
+function moveNode(root: GroupLike, path: NodePath, delta: -1 | 1): GroupLike {
+  const index = path[path.length - 1];
+  return editGroup(root, path.slice(0, -1), (group) => {
+    const target = index + delta;
+    if (target < 0 || target >= group.conditions.length) {
+      return group;
+    }
+    const conditions = [...group.conditions];
+    [conditions[index], conditions[target]] = [conditions[target], conditions[index]];
+    return { ...group, conditions };
+  });
+}
+
 function setConnector(root: GroupLike, groupPath: NodePath, index: number, connector: JiraFilterConnector): GroupLike {
   return editGroup(root, groupPath, (group) => {
     const connectors = [...group.connectors];
@@ -106,12 +127,40 @@ const FIELD_LABELS: Record<JiraFilterField, string> = {
   labels: "Labels",
 };
 
+const SHARED_STATUS_GROUP = "Shared across projects";
+const UNSCOPED_STATUS_GROUP = "Unknown project";
+
+/** The single project owning a status, or null when it is shared or unknown. */
+function owningProjectName(status: JiraStatus): string | null {
+  const projects = status.projects ?? [];
+  return projects.length === 1 ? projects[0].name : null;
+}
+
+/**
+ * Two statuses named "Done" are indistinguishable in a summary line, so a duplicated
+ * name is qualified by the project it belongs to. Unique names are left alone.
+ */
+function describeStatusValue(id: string, statuses: JiraStatus[]): string {
+  const status = statuses.find((item) => item.id === id);
+  if (!status) {
+    return id;
+  }
+  if (statuses.filter((item) => item.name === status.name).length < 2) {
+    return status.name;
+  }
+  const owner = owningProjectName(status);
+  if (owner) {
+    return `${status.name} (${owner})`;
+  }
+  return (status.projects ?? []).length > 1 ? `${status.name} (shared)` : status.name;
+}
+
 function describeCondition(condition: JiraFilterCondition, statuses: JiraStatus[]): string {
   const field = FIELD_LABELS[condition.field] ?? condition.field;
   if (condition.field === "status" || condition.field === "labels") {
     const values = Array.isArray(condition.value) ? condition.value : [];
     const names = condition.field === "status"
-      ? values.map((id) => statuses.find((status) => status.id === id)?.name ?? id)
+      ? values.map((id) => describeStatusValue(id, statuses))
       : values;
     return `${field} ${condition.operator} (${names.join(", ") || "—"})`;
   }
@@ -129,17 +178,33 @@ export function describeFilters(group: GroupLike, statuses: JiraStatus[], isRoot
   if (parts.length === 0) {
     return "";
   }
+  // Evaluation runs strictly left to right and ignores operator precedence, so a mixed
+  // chain has to be parenthesised or the reader will apply the usual precedence and get
+  // a different answer than the importer does. An unmixed chain needs no such help.
+  const used = group.connectors.slice(0, parts.length - 1).map((connector) => connector ?? "AND");
+  const mixed = new Set(used).size > 1;
+
   let text = parts[0];
   for (let i = 1; i < parts.length; i++) {
-    text += ` ${group.connectors[i - 1] ?? "AND"} ${parts[i]}`;
+    const connector = used[i - 1] ?? "AND";
+    text = mixed && i > 1 ? `(${text}) ${connector} ${parts[i]}` : `${text} ${connector} ${parts[i]}`;
   }
   return isRoot || parts.length === 1 ? text : `(${text})`;
 }
 
+type PickerOption = {
+  id: string;
+  name: string;
+  /** Heading this option is listed under. Absent on every option means a flat list. */
+  group?: string;
+  /** Short qualifier shown beside the name when the name alone is ambiguous. */
+  detail?: string;
+};
+
 type MultiPickerProps = {
   open: boolean;
   onToggle: () => void;
-  options: { id: string; name: string }[];
+  options: PickerOption[];
   selected: string[];
   onSelect: (id: string) => void;
   placeholder: string;
@@ -150,6 +215,66 @@ type MultiPickerProps = {
   loading?: boolean;
   loadingText?: string;
 };
+
+/** Splits an already ordered option list into consecutive runs sharing a heading. */
+function groupOptions(options: PickerOption[]): { name?: string; options: PickerOption[] }[] {
+  const sections: { name?: string; options: PickerOption[] }[] = [];
+  for (const option of options) {
+    const current = sections[sections.length - 1];
+    if (current && current.name === option.group) {
+      current.options.push(option);
+    } else {
+      sections.push({ name: option.group, options: [option] });
+    }
+  }
+  return sections;
+}
+
+/**
+ * Groups statuses by the project that owns them so the copies a team-managed project
+ * brings along stop looking identical. Statuses used by several projects are collected
+ * under one heading instead of being repeated beneath every one of them.
+ */
+function buildStatusOptions(statuses: JiraStatus[]): PickerOption[] {
+  const scoped = statuses.some((status) => (status.projects ?? []).length > 0);
+  const seen = new Set<string>();
+  const duplicated = new Set<string>();
+  for (const status of statuses) {
+    if (seen.has(status.name)) {
+      duplicated.add(status.name);
+    }
+    seen.add(status.name);
+  }
+
+  const options = statuses.map((status) => {
+    const owner = owningProjectName(status);
+    const shared = (status.projects ?? []).length > 1;
+    const detail = duplicated.has(status.name) ? owner ?? (shared ? "shared" : undefined) : undefined;
+    if (!scoped) {
+      return { id: status.id, name: status.name, detail };
+    }
+    return {
+      id: status.id,
+      name: status.name,
+      group: owner ?? (shared ? SHARED_STATUS_GROUP : UNSCOPED_STATUS_GROUP),
+      detail,
+    };
+  });
+
+  if (!scoped) {
+    return options;
+  }
+
+  // Shared first because it holds the statuses most rooms actually use, then projects
+  // alphabetically, and anything unattributable last.
+  const rank = (group?: string) =>
+    group === SHARED_STATUS_GROUP ? 0 : group === UNSCOPED_STATUS_GROUP ? 2 : 1;
+  return options.sort((left, right) =>
+    rank(left.group) - rank(right.group)
+    || (left.group ?? "").localeCompare(right.group ?? "")
+    || left.name.localeCompare(right.name)
+  );
+}
 
 function MultiPicker({
   open,
@@ -173,10 +298,15 @@ function MultiPicker({
     }
   }, [open]);
 
+  const onlySelected = selected.length === 1
+    ? options.find((option) => option.id === selected[0])
+    : undefined;
   const label = selected.length === 0
     ? placeholder
     : selected.length === 1
-      ? (options.find((option) => option.id === selected[0])?.name ?? selected[0])
+      ? (onlySelected
+        ? `${onlySelected.name}${onlySelected.detail ? ` (${onlySelected.detail})` : ""}`
+        : selected[0])
       : `${selected.length} ${unit}`;
 
   const term = search.trim().toLowerCase();
@@ -216,20 +346,33 @@ function MultiPicker({
           ) : visible.length === 0 ? (
             <span className="jira-filter-status-empty">No matching {unit}</span>
           ) : null}
-          {!loading && visible.map((option) => {
-            const checked = selected.includes(option.id);
-            return (
-              <button
-                key={option.id}
-                className={`jira-filter-status-option${checked ? " is-selected" : ""}`}
-                type="button"
-                onClick={() => onSelect(option.id)}
-              >
-                <span className="jira-filter-status-option__check" aria-hidden="true">{checked ? "✓" : ""}</span>
-                {option.name}
-              </button>
-            );
-          })}
+          {!loading && groupOptions(visible).map((section, index) => (
+            <div className="jira-filter-status-section" key={section.name ?? `section-${index}`}>
+              {section.name ? (
+                <h4 className="jira-filter-status-section__title">{section.name}</h4>
+              ) : null}
+              {section.options.map((option) => {
+                const checked = selected.includes(option.id);
+                return (
+                  <button
+                    key={option.id}
+                    className={`jira-filter-status-option${checked ? " is-selected" : ""}`}
+                    type="button"
+                    onClick={() => onSelect(option.id)}
+                  >
+                    <span className="jira-filter-status-option__check" aria-hidden="true">{checked ? "✓" : ""}</span>
+                    {option.name}
+                    {option.detail ? (
+                      <>
+                        {" "}
+                        <span className="jira-filter-status-option__detail">{option.detail}</span>
+                      </>
+                    ) : null}
+                  </button>
+                );
+              })}
+            </div>
+          ))}
         </div>
       )}
     </div>
@@ -288,7 +431,7 @@ export default function JiraFilterEditor({
     onChange({ conditions: next.conditions, connectors: next.connectors });
   }
 
-  const statusOptions = statuses.map((status) => ({ id: status.id, name: status.name }));
+  const statusOptions = buildStatusOptions(statuses);
   const labelOptions = labels.map((label) => ({ id: label, name: label }));
 
   function renderCondition(condition: JiraFilterCondition, path: NodePath, removable: boolean) {
@@ -419,21 +562,50 @@ export default function JiraFilterEditor({
       <div className="jira-filter-conditions">
         {group.conditions.map((node, index) => {
           const childPath = [...path, index];
+          const orderable = group.conditions.length > 1;
           return (
-            <div key={childPath.join("-")}>
-              {index > 0 && (
-                <div className="jira-filter-connector">
-                  <select
-                    value={group.connectors[index - 1] ?? "AND"}
-                    onChange={(event) =>
-                      apply(setConnector(filters, path, index - 1, event.target.value as JiraFilterConnector))
-                    }
-                  >
-                    <option value="AND">AND</option>
-                    <option value="OR">OR</option>
-                  </select>
-                </div>
-              )}
+            <div className="jira-filter-item" key={childPath.join("-")}>
+              <div className="jira-filter-item__lead">
+                {index > 0 ? (
+                  <div className="jira-filter-connector">
+                    <select
+                      aria-label="Join with the condition above"
+                      value={group.connectors[index - 1] ?? "AND"}
+                      onChange={(event) =>
+                        apply(setConnector(filters, path, index - 1, event.target.value as JiraFilterConnector))
+                      }
+                    >
+                      <option value="AND">AND</option>
+                      <option value="OR">OR</option>
+                    </select>
+                  </div>
+                ) : (
+                  <span className="jira-filter-item__where">Where</span>
+                )}
+                {orderable && (
+                  <div className="jira-filter-move">
+                    <button
+                      aria-label="Move up"
+                      className="jira-filter-move__button"
+                      disabled={index === 0}
+                      onClick={() => apply(moveNode(filters, childPath, -1))}
+                      type="button"
+                    >
+                      ↑
+                    </button>
+                    <button
+                      aria-label="Move down"
+                      className="jira-filter-move__button"
+                      disabled={index === group.conditions.length - 1}
+                      onClick={() => apply(moveNode(filters, childPath, 1))}
+                      type="button"
+                    >
+                      ↓
+                    </button>
+                  </div>
+                )}
+              </div>
+              <div className="jira-filter-item__body">
               {isJiraFilterGroup(node) ? (
                 <div className="jira-filter-group">
                   <div className="jira-filter-group__header">
@@ -452,6 +624,7 @@ export default function JiraFilterEditor({
               ) : (
                 renderCondition(node, childPath, removable)
               )}
+              </div>
             </div>
           );
         })}

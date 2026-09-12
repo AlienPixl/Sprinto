@@ -205,3 +205,170 @@ describe("JiraFilterEditor lazy metadata", () => {
     expect(screen.queryByPlaceholderText("Search statuses…")).toBeNull();
   });
 });
+
+describe("JiraFilterEditor status grouping", () => {
+  // One shared status plus two team-managed copies, all named "Done".
+  const scopedStatuses: JiraStatus[] = [
+    { id: "1", name: "To Do", projects: [{ key: "OPS", name: "Operations" }, { key: "WEB", name: "Web" }] },
+    { id: "10001", name: "Done", projects: [{ key: "OPS", name: "Operations" }, { key: "WEB", name: "Web" }] },
+    { id: "13413", name: "Done", projects: [{ key: "MKT", name: "Marketing" }] },
+    { id: "13417", name: "Done", projects: [{ key: "SUP", name: "Support" }] },
+  ];
+
+  function renderPicker(statusList: JiraStatus[]) {
+    render(
+      <JiraFilterEditor
+        filters={{ conditions: [{ field: "status", operator: "IN", value: [] }], connectors: [] }}
+        onChange={() => {}}
+        statuses={statusList}
+        labels={[]}
+      />
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Select statuses|statuses/ }));
+  }
+
+  it("puts a project-owned status under its project heading", () => {
+    renderPicker(scopedStatuses);
+
+    expect(screen.getByRole("heading", { name: "Marketing" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Support" })).toBeTruthy();
+  });
+
+  it("collects statuses shared by several projects into one heading", () => {
+    renderPicker(scopedStatuses);
+
+    expect(screen.getByRole("heading", { name: "Shared across projects" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Operations" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Web" })).toBeNull();
+  });
+
+  it("marks a duplicated status name with the project that owns it", () => {
+    renderPicker(scopedStatuses);
+
+    expect(screen.getByRole("button", { name: "Done Marketing" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Done Support" })).toBeTruthy();
+    // "To Do" is unique, so it needs no extra wording.
+    expect(screen.getByRole("button", { name: "To Do" })).toBeTruthy();
+  });
+
+  it("keeps the flat list when no status carries project information", () => {
+    renderPicker([{ id: "10", name: "To Do" }, { id: "99", name: "Done" }]);
+
+    expect(screen.queryByRole("heading", { name: "Shared across projects" })).toBeNull();
+    expect(screen.getByRole("button", { name: "To Do" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Done" })).toBeTruthy();
+  });
+
+  it("names the owning project in the rule summary of a duplicated status", () => {
+    const summary = describeFilters(
+      { conditions: [{ field: "status", operator: "IN", value: ["13413", "1"] }], connectors: [] },
+      scopedStatuses
+    );
+
+    expect(summary).toContain("Done (Marketing)");
+    // Unique names stay clean.
+    expect(summary).toContain("To Do");
+    expect(summary).not.toContain("To Do (");
+  });
+});
+
+describe("JiraFilterEditor evaluation summary", () => {
+  const cond = (value: string) => ({ field: "status" as const, operator: "IN" as const, value: [value] });
+
+  it("spells out the real grouping when AND and OR are mixed", () => {
+    // Conditions are evaluated strictly left to right, with no operator precedence,
+    // so "A OR B AND C" means "(A OR B) AND C" and must not read otherwise.
+    const summary = describeFilters(
+      { conditions: [cond("10"), cond("99"), cond("10")], connectors: ["OR", "AND"] },
+      statuses
+    );
+
+    expect(summary.startsWith("(")).toBe(true);
+    expect(summary).toContain(") AND ");
+  });
+
+  it("leaves an unmixed chain alone", () => {
+    const summary = describeFilters(
+      { conditions: [cond("10"), cond("99"), cond("10")], connectors: ["AND", "AND"] },
+      statuses
+    );
+
+    expect(summary).not.toContain("(Status");
+    expect(summary.split(" AND ")).toHaveLength(3);
+  });
+
+  it("nests the parentheses left to right across a longer mixed chain", () => {
+    const summary = describeFilters(
+      { conditions: [cond("10"), cond("99"), cond("10"), cond("99")], connectors: ["AND", "OR", "AND"] },
+      statuses
+    );
+
+    expect(summary.startsWith("((")).toBe(true);
+  });
+});
+
+describe("JiraFilterEditor reordering", () => {
+  const twoConditions: JiraImportFilters = {
+    conditions: [
+      { field: "storyPoints", operator: "IS EMPTY", value: null },
+      { field: "labels", operator: "IN", value: ["dor"] },
+    ],
+    connectors: ["AND"],
+  };
+
+  it("moves a condition towards the front", () => {
+    render(<Harness initial={twoConditions} />);
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Move up" })[1]);
+
+    const filters = currentFilters();
+    expect(filters.conditions[0]).toEqual({ field: "labels", operator: "IN", value: ["dor"] });
+    expect(filters.conditions[1]).toEqual({ field: "storyPoints", operator: "IS EMPTY", value: null });
+  });
+
+  it("moves a condition towards the back", () => {
+    render(<Harness initial={twoConditions} />);
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Move down" })[0]);
+
+    const filters = currentFilters();
+    expect(filters.conditions[0]).toEqual({ field: "labels", operator: "IN", value: ["dor"] });
+  });
+
+  it("leaves the AND/OR pattern in place when a condition moves", () => {
+    render(
+      <Harness
+        initial={{
+          conditions: [
+            { field: "storyPoints", operator: "IS EMPTY", value: null },
+            { field: "labels", operator: "IN", value: ["dor"] },
+            { field: "status", operator: "IN", value: ["99"] },
+          ],
+          connectors: ["OR", "AND"],
+        }}
+      />
+    );
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Move down" })[0]);
+
+    // The row moves through the expression; the shape of the expression stays.
+    expect(currentFilters().connectors).toEqual(["OR", "AND"]);
+  });
+
+  it("offers no way to move the first condition up or the last one down", () => {
+    render(<Harness initial={twoConditions} />);
+
+    const up = screen.getAllByRole("button", { name: "Move up" }) as HTMLButtonElement[];
+    const down = screen.getAllByRole("button", { name: "Move down" }) as HTMLButtonElement[];
+
+    expect(up[0].disabled).toBe(true);
+    expect(down[down.length - 1].disabled).toBe(true);
+  });
+
+  it("does not offer reordering for a lone condition", () => {
+    render(<Harness initial={singleCondition} />);
+
+    expect(screen.queryByRole("button", { name: "Move up" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Move down" })).toBeNull();
+  });
+});

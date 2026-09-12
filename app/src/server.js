@@ -182,6 +182,18 @@ function json(res, payload, status = 200) {
   res.status(status).json(payload);
 }
 
+/**
+ * Reports a Jira failure to the client, carrying over whether trying again could ever
+ * help. Only failures Jira itself explained mark themselves as hopeless; anything
+ * unrecognised stays retryable so the UI keeps offering the option.
+ */
+function jiraFailure(res, error, fallback) {
+  json(res, {
+    error: error instanceof Error ? error.message : fallback,
+    retryable: error?.retryable !== false,
+  }, 400);
+}
+
 function toAuditDisplay(value) {
   return value === null || value === undefined || value === "" ? null : value;
 }
@@ -2036,7 +2048,7 @@ app.get("/api/jira/statuses", requireUser, requireJiraImport, jiraMetaLimiter, a
     const settings = await getSettings();
     json(res, { statuses: await getJiraStatuses(settings) });
   } catch (error) {
-    json(res, { error: error instanceof Error ? error.message : "Failed to load Jira statuses." }, 400);
+    jiraFailure(res, error, "Failed to load Jira statuses.");
   }
 });
 
@@ -2045,7 +2057,7 @@ app.get("/api/jira/labels", requireUser, requireJiraImport, jiraMetaLimiter, asy
     const settings = await getSettings();
     json(res, { labels: await getJiraLabels(settings) });
   } catch (error) {
-    json(res, { error: error instanceof Error ? error.message : "Failed to load Jira labels." }, 400);
+    jiraFailure(res, error, "Failed to load Jira labels.");
   }
 });
 
@@ -2054,7 +2066,7 @@ app.get("/api/jira/boards", requireUser, requireJiraImport, jiraMetaLimiter, asy
     const settings = await getSettings();
     json(res, { boards: await listJiraBoards(settings) });
   } catch (error) {
-    json(res, { error: error instanceof Error ? error.message : "Failed to load Jira boards." }, 400);
+    jiraFailure(res, error, "Failed to load Jira boards.");
   }
 });
 
@@ -2063,7 +2075,7 @@ app.get("/api/jira/boards/:boardId/sprints", requireUser, requireJiraImport, jir
     const settings = await getSettings();
     json(res, { sprints: await listJiraSprints(settings, req.params.boardId) });
   } catch (error) {
-    json(res, { error: error instanceof Error ? error.message : "Failed to load Jira sprints." }, 400);
+    jiraFailure(res, error, "Failed to load Jira sprints.");
   }
 });
 
@@ -2077,7 +2089,7 @@ app.post("/api/jira/boards/:boardId/sprints/:sprintId/issues/preview", requireUs
     });
     json(res, { issues });
   } catch (error) {
-    json(res, { error: error instanceof Error ? error.message : "Failed to preview Jira issues." }, 400);
+    jiraFailure(res, error, "Failed to preview Jira issues.");
   }
 });
 
@@ -2086,7 +2098,7 @@ app.get("/api/jira/issues/search", requireUser, requireJiraImport, jiraSearchLim
     const issues = await searchJiraImportIssues(await getSettings(), String(req.query?.query || ""));
     json(res, { issues });
   } catch (error) {
-    json(res, { error: error instanceof Error ? error.message : "Failed to search Jira issues." }, 400);
+    jiraFailure(res, error, "Failed to search Jira issues.");
   }
 });
 
@@ -2101,7 +2113,7 @@ app.post("/api/jira/boards/:boardId/issues/preview", requireUser, requireJiraImp
     });
     json(res, { issues });
   } catch (error) {
-    json(res, { error: error instanceof Error ? error.message : "Failed to preview Jira issues." }, 400);
+    jiraFailure(res, error, "Failed to preview Jira issues.");
   }
 });
 
@@ -2212,7 +2224,7 @@ app.post("/api/rooms/:roomId/jira/import", requireUser, requireJiraImport, jiraL
       snapshot: await getRoomSnapshot(req.params.roomId, req.user.id),
     });
   } catch (error) {
-    json(res, { error: error instanceof Error ? error.message : "Failed to import Jira issues." }, 400);
+    jiraFailure(res, error, "Failed to import Jira issues.");
   }
 });
 
@@ -2276,7 +2288,7 @@ app.post("/api/rooms/:roomId/jira/import-issues", requireUser, requireJiraImport
       snapshot: await getRoomSnapshot(req.params.roomId, req.user.id),
     });
   } catch (error) {
-    json(res, { error: error instanceof Error ? error.message : "Failed to import Jira issues." }, 400);
+    jiraFailure(res, error, "Failed to import Jira issues.");
   }
 });
 
@@ -2298,7 +2310,7 @@ app.get("/api/rooms/:roomId/jira/issues/:issueId/assignees", requireUser, requir
     const users = await listJiraAssignableUsers(settings, matchingIssue.externalIssueKey, rawQuery || "");
     json(res, { users });
   } catch (error) {
-    json(res, { error: error instanceof Error ? error.message : "Failed to load Jira assignees." }, 400);
+    jiraFailure(res, error, "Failed to load Jira assignees.");
   }
 });
 
@@ -2338,7 +2350,7 @@ app.post("/api/rooms/:roomId/jira/issues/:issueId/apply-estimate", requireUser, 
     });
     json(res, { ...result, snapshot: await getRoomSnapshot(req.params.roomId, req.user.id) });
   } catch (error) {
-    json(res, { error: error instanceof Error ? error.message : "Failed to apply Jira estimate." }, 400);
+    jiraFailure(res, error, "Failed to apply Jira estimate.");
   }
 });
 
@@ -2378,7 +2390,7 @@ app.post("/api/rooms/:roomId/jira/issues/:issueId/assignee", requireUser, requir
     });
     json(res, { ...result, snapshot: await getRoomSnapshot(req.params.roomId, req.user.id) });
   } catch (error) {
-    json(res, { error: error instanceof Error ? error.message : "Failed to update Jira assignee." }, 400);
+    jiraFailure(res, error, "Failed to update Jira assignee.");
   }
 });
 
@@ -2457,7 +2469,7 @@ app.post("/api/rooms/:roomId/jira/issues/:issueId/report", requireUser, requireJ
     });
     json(res, { ...result, snapshot: await getRoomSnapshot(req.params.roomId, req.user.id) });
   } catch (error) {
-    json(res, { error: error instanceof Error ? error.message : "Failed to post Jira report." }, 400);
+    jiraFailure(res, error, "Failed to post Jira report.");
   }
 });
 
@@ -2656,7 +2668,7 @@ app.post("/api/jira/worklog/report", requireUser, requireWorklogView, jiraLimite
     });
     json(res, { rows });
   } catch (error) {
-    json(res, { error: error instanceof Error ? error.message : "Failed to build Jira worklog report." }, 400);
+    jiraFailure(res, error, "Failed to build Jira worklog report.");
   }
 });
 
@@ -2665,7 +2677,7 @@ app.get("/api/jira/worklog/users", requireUser, requireWorklogView, jiraSearchLi
     const users = await listJiraWorklogUsers(await getSettings(), String(req.query?.query || ""));
     json(res, { users });
   } catch (error) {
-    json(res, { error: error instanceof Error ? error.message : "Failed to load Jira users or groups." }, 400);
+    jiraFailure(res, error, "Failed to load Jira users or groups.");
   }
 });
 
@@ -2674,7 +2686,7 @@ app.get("/api/jira/worklog/link-types", requireUser, requireWorklogView, jiraMet
     const linkTypes = await listJiraIssueLinkTypes(await getSettings());
     json(res, { linkTypes });
   } catch (error) {
-    json(res, { error: error instanceof Error ? error.message : "Failed to load Jira issue link types." }, 400);
+    jiraFailure(res, error, "Failed to load Jira issue link types.");
   }
 });
 
@@ -2683,7 +2695,7 @@ app.get("/api/jira/worklog/issues", requireUser, requireWorklogView, jiraSearchL
     const issues = await searchJiraWorklogIssues(await getSettings(), String(req.query?.query || ""));
     json(res, { issues });
   } catch (error) {
-    json(res, { error: error instanceof Error ? error.message : "Failed to load Jira issues." }, 400);
+    jiraFailure(res, error, "Failed to load Jira issues.");
   }
 });
 
@@ -2695,7 +2707,7 @@ app.get("/api/jira/worklog/issues/:issueKey", requireUser, requireWorklogView, j
     }
     json(res, { issue });
   } catch (error) {
-    json(res, { error: error instanceof Error ? error.message : "Failed to load Jira issue." }, 400);
+    jiraFailure(res, error, "Failed to load Jira issue.");
   }
 });
 
@@ -2945,7 +2957,7 @@ app.post("/api/admin/settings/integrations/jira/test", requireUser, requireManag
     });
     json(res, testResult);
   } catch (error) {
-    json(res, { error: error instanceof Error ? error.message : "Jira connection test failed." }, 400);
+    jiraFailure(res, error, "Jira connection test failed.");
   }
 });
 

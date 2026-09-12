@@ -102,7 +102,7 @@ describe("WorklogView", () => {
       />
     );
 
-    const issueInput = screen.getByPlaceholderText("PROJ-123 nebo Mediox");
+    const issueInput = screen.getByPlaceholderText("PROJ-123 or Mediox");
     fireEvent.change(issueInput, { target: { value: "Mediox" } });
     expect(onLoadIssues).not.toHaveBeenCalled();
 
@@ -413,5 +413,132 @@ describe("WorklogView", () => {
 
     const toggle = screen.getByRole("button", { name: "Epic - Include children" });
     expect((toggle as HTMLButtonElement).disabled).toBe(false);
+  });
+  it("switches the results between the overview and the calendar", async () => {
+    const onLoadReport = vi.fn().mockResolvedValue({
+      rows: [
+        {
+          epicKey: "",
+          issueKey: "PROJ-1",
+          issueTitle: "Implement worklog",
+          issueUrl: "https://example.atlassian.net/browse/PROJ-1",
+          accountId: "abc",
+          author: "Alice",
+          startedAt: "2026-04-01T10:00:00.000Z",
+          secondsSpent: 3600,
+        },
+      ],
+    });
+    render(
+      <WorklogView
+        onLoadIssue={vi.fn().mockResolvedValue({ key: "PROJ-1", title: "Implement worklog", issueType: "Task" })}
+        onLoadIssues={vi.fn().mockResolvedValue([])}
+        onLoadReport={onLoadReport}
+        onLoadUsers={vi.fn().mockResolvedValue([])}
+      />
+    );
+
+    fireEvent.change(screen.getByLabelText("From"), { target: { value: "2026-03-31" } });
+    fireEvent.change(screen.getByLabelText("To"), { target: { value: "2026-04-02" } });
+    fireEvent.click(screen.getByRole("button", { name: "View report" }));
+    await waitFor(() => expect(onLoadReport).toHaveBeenCalledTimes(1));
+
+    expect(screen.getByRole("button", { name: /Show worklog table/i })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Calendar" }));
+
+    expect(screen.getByTitle(/^PROJ-1 · /)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Show worklog table/i })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Overview" }));
+
+    expect(screen.getByRole("button", { name: /Show worklog table/i })).toBeTruthy();
+    expect(screen.queryByTitle(/^PROJ-1 · /)).toBeNull();
+  });
+
+  it("locks the page to the window while the calendar is shown", async () => {
+    const onLoadReport = vi.fn().mockResolvedValue({ rows: [] });
+    const onResultsViewChange = vi.fn();
+    const { container } = render(
+      <WorklogView
+        onLoadIssue={vi.fn().mockResolvedValue({ key: "PROJ-1", title: "Implement worklog", issueType: "Task" })}
+        onLoadIssues={vi.fn().mockResolvedValue([])}
+        onLoadReport={onLoadReport}
+        onLoadUsers={vi.fn().mockResolvedValue([])}
+        onResultsViewChange={onResultsViewChange}
+      />
+    );
+    const shell = container.querySelector(".page-shell") as HTMLElement;
+
+    expect(shell.className).not.toContain("worklog-screen");
+
+    fireEvent.click(screen.getByRole("button", { name: "Calendar" }));
+
+    expect(shell.className).toContain("worklog-screen");
+    expect(onResultsViewChange).toHaveBeenLastCalledWith("calendar");
+
+    fireEvent.click(screen.getByRole("button", { name: "Overview" }));
+
+    expect(shell.className).not.toContain("worklog-screen");
+    expect(onResultsViewChange).toHaveBeenLastCalledWith("overview");
+  });
+});
+
+describe("WorklogView search failures", () => {
+  const baseProps = {
+    onLoadIssue: vi.fn().mockResolvedValue({ key: "PROJ-1", title: "Implement worklog", issueType: "Task" }),
+    onLoadReport: vi.fn().mockResolvedValue({ rows: [] }),
+  };
+
+  it("reports why a people search failed instead of claiming nobody matched", async () => {
+    const onLoadUsers = vi.fn().mockRejectedValue(
+      new Error("Jira rejected the service account. Ask an administrator to check the account email and API token in the Jira integration settings.")
+    );
+
+    render(
+      <WorklogView
+        {...baseProps}
+        onLoadIssues={vi.fn().mockResolvedValue([])}
+        onLoadUsers={onLoadUsers}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Search users and groups" }));
+
+    expect(await screen.findByText(/Ask an administrator/)).toBeTruthy();
+    expect(screen.queryByText("No people or groups found")).toBeNull();
+  });
+
+  it("still says nobody matched when the search really came back empty", async () => {
+    render(
+      <WorklogView
+        {...baseProps}
+        onLoadIssues={vi.fn().mockResolvedValue([])}
+        onLoadUsers={vi.fn().mockResolvedValue([])}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Search users and groups" }));
+
+    expect(await screen.findByText("No people or groups found")).toBeTruthy();
+  });
+
+  it("reports why an issue search failed instead of claiming nothing matched", async () => {
+    const onLoadIssues = vi.fn().mockRejectedValue(new Error("Jira is temporarily unavailable. Try again in a moment."));
+
+    render(
+      <WorklogView
+        {...baseProps}
+        onLoadIssues={onLoadIssues}
+        onLoadUsers={vi.fn().mockResolvedValue([])}
+      />
+    );
+
+    // The issue search refuses to run on an empty box, so give it something to look for.
+    fireEvent.change(screen.getByPlaceholderText(/PROJ-123/), { target: { value: "PROJ-1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search issues" }));
+
+    expect(await screen.findByText(/temporarily unavailable/)).toBeTruthy();
+    expect(screen.queryByText("No issues found")).toBeNull();
   });
 });

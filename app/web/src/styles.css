@@ -36,7 +36,8 @@ body {
   flex-direction: column;
 }
 
-.app-shell--room {
+.app-shell--room,
+.app-shell--locked {
   height: 100vh;
   height: 100dvh;
   overflow: hidden;
@@ -49,7 +50,8 @@ body {
   flex-direction: column;
 }
 
-.app-main--room {
+.app-main--room,
+.app-main--locked {
   overflow: hidden;
 }
 
@@ -328,6 +330,42 @@ input[type="number"]::-webkit-inner-spin-button {
 .page-shell.room-screen {
   flex: 1 1 auto;
   overflow: hidden;
+}
+
+/* Calendar mode: the same construction as a room, so the gap above the footer matches. */
+.worklog-screen {
+  padding-bottom: 0.45rem;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.page-shell.worklog-screen {
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.worklog-screen .worklog-report,
+.worklog-screen .worklog-results {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* The report is a grid, so the spare height of the locked shell would be shared out between its
+   auto rows and make the toolbar grow with the window. Only the results row may take the slack. */
+.worklog-screen .worklog-report {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.worklog-screen .worklog-results {
+  display: flex;
+  flex-direction: column;
+}
+
+.worklog-screen .worklog-calendar {
+  flex: 1 1 auto;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
 .app-footer {
@@ -2877,6 +2915,35 @@ button:disabled {
   text-align: center;
 }
 
+.jira-filter-status-section {
+  display: flex;
+  flex-direction: column;
+}
+
+.jira-filter-status-section__title {
+  margin: 0;
+  padding: 0.42rem 0.6rem 0.26rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(249, 243, 223, 0.5);
+  background: rgba(249, 243, 223, 0.04);
+  border-bottom: 1px solid rgba(249, 243, 223, 0.1);
+}
+
+.jira-filter-status-section + .jira-filter-status-section .jira-filter-status-section__title {
+  border-top: 1px solid rgba(249, 243, 223, 0.1);
+}
+
+.jira-filter-status-option__detail {
+  margin-left: auto;
+  padding-left: 0.5rem;
+  font-size: 0.72rem;
+  color: rgba(249, 243, 223, 0.5);
+  white-space: nowrap;
+}
+
 .jira-filter-status-empty {
   padding: 0.5rem 0.6rem;
   font-size: 0.8rem;
@@ -3037,12 +3104,73 @@ button:disabled {
   border-color: rgba(220, 80, 80, 0.4);
 }
 
+/* Each node sits in a row: a narrow rail carrying the AND/OR and the reorder arrows,
+   then the condition itself. Keeping the rail a fixed width means the controls stay put
+   while the condition wraps. */
+.jira-filter-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+}
+
+.jira-filter-item__lead {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  flex: 0 0 auto;
+  min-width: 92px;
+  padding-top: 0.15rem;
+}
+
+.jira-filter-item__body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.jira-filter-item__where {
+  font-size: 0.65rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(249, 243, 223, 0.38);
+  padding-left: 0.15rem;
+}
+
 .jira-filter-connector {
   display: flex;
   align-items: center;
-  align-self: flex-start;
-  padding-left: 0.2rem;
-  margin-bottom: 0.3rem;
+}
+
+.jira-filter-move {
+  display: flex;
+  align-items: center;
+  gap: 0.1rem;
+  margin-left: auto;
+}
+
+.jira-filter-move__button {
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-size: 0.7rem;
+  line-height: 1;
+  border: 1px solid rgba(249, 243, 223, 0.14);
+  border-radius: 5px;
+  background: rgba(249, 243, 223, 0.05);
+  color: rgba(249, 243, 223, 0.65);
+  cursor: pointer;
+}
+
+.jira-filter-move__button:hover:not(:disabled) {
+  background: rgba(249, 243, 223, 0.12);
+  color: #f9f3df;
+}
+
+.jira-filter-move__button:disabled {
+  opacity: 0.25;
+  cursor: default;
 }
 
 .jira-filter-connector select {
@@ -5350,6 +5478,12 @@ html[data-theme="glow"] .admin-role-mapping-divider {
   font-size: 0.8rem;
 }
 
+/* A search that failed reads differently from one that found nothing. */
+.worklog-user-picker__empty--error {
+  color: #f0a5a5;
+  line-height: 1.45;
+}
+
 .worklog-selected-chip {
   display: flex;
   align-items: center;
@@ -5441,6 +5575,346 @@ html[data-theme="glow"] .admin-role-mapping-divider {
 .worklog-table-toggle strong {
   color: rgba(249, 243, 223, 0.62);
   font-size: 0.78rem;
+}
+
+.worklog-view-switch {
+  display: inline-flex;
+  align-self: start;
+  gap: 0.2rem;
+  padding: 0.2rem;
+  border: 1px solid rgba(249, 243, 223, 0.1);
+  border-radius: 999px;
+  background: rgba(249, 243, 223, 0.035);
+}
+
+.worklog-view-switch__option {
+  border: 0;
+  border-radius: 999px;
+  padding: 0.35rem 0.95rem;
+  background: transparent;
+  color: rgba(249, 243, 223, 0.66);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  font-size: 0.82rem;
+}
+
+.worklog-view-switch__option.is-active {
+  background: rgba(249, 243, 223, 0.12);
+  color: #f9f3df;
+}
+
+.worklog-calendar {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.8rem 0.9rem;
+  border-radius: 14px;
+  border: 1px solid rgba(249, 243, 223, 0.1);
+  background:
+    linear-gradient(180deg, rgba(249, 243, 223, 0.03), rgba(249, 243, 223, 0.015)),
+    rgba(7, 23, 20, 0.72);
+  box-shadow: inset 0 1px 0 rgba(249, 243, 223, 0.04);
+}
+
+.worklog-calendar__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.worklog-calendar__people-button {
+  min-height: unset;
+  padding: 0.3rem 0.75rem;
+  border: 1px solid rgba(249, 243, 223, 0.12);
+  border-radius: 999px;
+  background: rgba(249, 243, 223, 0.035);
+  color: rgba(249, 243, 223, 0.82);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.worklog-calendar__people-button:hover {
+  border-color: rgba(120, 198, 163, 0.4);
+  background: rgba(120, 198, 163, 0.14);
+}
+
+.worklog-calendar__people-panel {
+  gap: 0;
+  padding: 0.35rem;
+  min-width: 200px;
+  max-height: 15rem;
+  overflow-y: auto;
+}
+
+.worklog-calendar__people-option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.45rem;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+
+.worklog-calendar__people-option:hover {
+  background: rgba(249, 243, 223, 0.06);
+}
+
+.worklog-calendar__people-option input {
+  min-height: unset;
+  margin: 0;
+  width: 0.9rem;
+  height: 0.9rem;
+  accent-color: #78c6a3;
+}
+
+.worklog-calendar__people-option span {
+  color: rgba(249, 243, 223, 0.55);
+  font-size: 0.74rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.worklog-calendar__zone {
+  color: rgba(249, 243, 223, 0.5);
+  font-size: 0.75rem;
+}
+
+.worklog-calendar__toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-left: auto;
+}
+
+.worklog-calendar__zoom {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0.15rem;
+  border: 1px solid rgba(249, 243, 223, 0.1);
+  border-radius: 999px;
+  background: rgba(249, 243, 223, 0.035);
+}
+
+.worklog-calendar__zoom button {
+  min-width: 2rem;
+  min-height: unset;
+  padding: 0.2rem 0.5rem;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: rgba(249, 243, 223, 0.78);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.76rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.worklog-calendar__zoom button:hover:not(:disabled) {
+  background: rgba(249, 243, 223, 0.12);
+}
+
+.worklog-calendar__zoom button:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.worklog-calendar__viewport {
+  min-height: 0;
+  overflow: auto;
+}
+
+.worklog-calendar__grid {
+  display: grid;
+  gap: 0.7rem;
+  min-width: 100%;
+}
+
+.worklog-calendar__scale {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  padding-bottom: 0.15rem;
+  background: #0c1c19;
+}
+
+.worklog-calendar__scale .worklog-calendar__day-label {
+  z-index: 4;
+}
+
+.worklog-calendar__scale,
+.worklog-calendar__day {
+  display: grid;
+  grid-template-columns: 6rem minmax(0, 1fr) 12rem;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.worklog-calendar__scale-track {
+  position: relative;
+  height: 1.1rem;
+}
+
+.worklog-calendar__scale-tick {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  color: rgba(249, 243, 223, 0.42);
+  font-size: 0.68rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.worklog-calendar__days {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.worklog-calendar__day-label {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  padding-right: 0.5rem;
+  background: #0c1c19;
+  color: rgba(249, 243, 223, 0.82);
+  font-size: 0.82rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.worklog-calendar__day-label em {
+  color: rgba(249, 243, 223, 0.55);
+  font-size: 0.74rem;
+  font-style: normal;
+  font-weight: 400;
+}
+
+.worklog-calendar__day-summary {
+  position: sticky;
+  right: 0;
+  z-index: 2;
+  padding-left: 0.5rem;
+  background: #0c1c19;
+  color: rgba(249, 243, 223, 0.55);
+  font-size: 0.75rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.worklog-calendar__day.is-empty .worklog-calendar__day-label,
+.worklog-calendar__day.is-empty .worklog-calendar__day-summary {
+  opacity: 0.5;
+}
+
+.worklog-calendar__track {
+  position: relative;
+  height: calc(2.1rem * var(--worklog-lane-count, 1));
+  min-height: 2.6rem;
+  padding: 0.25rem 0;
+  border: 1px solid rgba(249, 243, 223, 0.08);
+  border-radius: 8px;
+  background: rgba(249, 243, 223, 0.02);
+  overflow: hidden;
+}
+
+.worklog-calendar__grid-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: rgba(249, 243, 223, 0.07);
+}
+
+.worklog-calendar__gap {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: repeating-linear-gradient(
+    135deg,
+    rgba(249, 243, 223, 0.16) 0,
+    rgba(249, 243, 223, 0.16) 2px,
+    transparent 2px,
+    transparent 7px
+  );
+}
+
+.worklog-calendar__entry {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  overflow: hidden;
+  padding: 0 0.5rem;
+  border: 1px solid rgba(120, 198, 163, 0.5);
+  border-radius: 7px;
+  background: rgba(120, 198, 163, 0.22);
+  color: #f9f3df;
+  font-size: 0.74rem;
+  line-height: 1;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.worklog-calendar__entry {
+  min-width: 3px;
+}
+
+.worklog-calendar__entry:hover {
+  background: rgba(120, 198, 163, 0.34);
+}
+
+.worklog-calendar__entry strong {
+  font-size: 0.74rem;
+}
+
+.worklog-calendar__entry span {
+  color: rgba(249, 243, 223, 0.72);
+  font-variant-numeric: tabular-nums;
+}
+
+.worklog-calendar__entry.is-overlapping {
+  border-color: rgba(255, 107, 107, 0.65);
+  background: rgba(255, 107, 107, 0.26);
+}
+
+.worklog-calendar__entry.is-overlapping:hover {
+  background: rgba(255, 107, 107, 0.36);
+}
+
+@media (max-width: 720px) {
+  .worklog-calendar__scale {
+    display: none;
+  }
+
+  .worklog-calendar__viewport {
+    max-height: 60vh;
+  }
+
+  .worklog-calendar__day {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.2rem;
+  }
+
+  .worklog-calendar__day-label,
+  .worklog-calendar__day-summary {
+    position: static;
+    padding: 0;
+    background: transparent;
+  }
+
+  .worklog-calendar__day-summary {
+    text-align: left;
+  }
 }
 
 .worklog-export-button {
@@ -6521,9 +6995,22 @@ html[data-theme="glow"] .settings-subcategory__divider {
   }
 
   .app-main--room,
+  .app-main--locked,
   .page-shell.room-screen,
+  .page-shell.worklog-screen,
   .room-board {
     overflow: visible;
+  }
+
+  .app-shell--locked {
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
+  }
+
+  .page-shell.worklog-screen {
+    flex: 0 0 auto;
+    padding-bottom: 1.5rem;
   }
 
   .poker-stage {
@@ -8420,6 +8907,10 @@ html[data-theme="glow"] .worklog-user-picker__empty {
   color: rgba(69, 80, 72, 0.72);
 }
 
+html[data-theme="glow"] .worklog-user-picker__empty--error {
+  color: #a3372f;
+}
+
 html[data-theme="glow"] .worklog-table-toggle {
   border-color: rgba(112, 94, 76, 0.12);
   background: rgba(255, 255, 255, 0.72) !important;
@@ -8438,6 +8929,124 @@ html[data-theme="glow"] .worklog-table-toggle span {
 
 html[data-theme="glow"] .worklog-table-toggle strong {
   color: rgba(86, 92, 84, 0.74);
+}
+
+html[data-theme="glow"] .worklog-view-switch {
+  border-color: rgba(112, 94, 76, 0.14);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+html[data-theme="glow"] .worklog-view-switch__option {
+  color: rgba(86, 92, 84, 0.78);
+}
+
+html[data-theme="glow"] .worklog-view-switch__option.is-active {
+  background: rgba(191, 94, 51, 0.14);
+  color: #223228;
+}
+
+html[data-theme="glow"] .worklog-calendar {
+  background: rgba(255, 251, 246, 0.92);
+  border-color: rgba(112, 94, 76, 0.14);
+  box-shadow: none;
+}
+
+html[data-theme="glow"] .worklog-calendar__person span,
+html[data-theme="glow"] .worklog-calendar__zone,
+html[data-theme="glow"] .worklog-calendar__scale-tick,
+html[data-theme="glow"] .worklog-calendar__day-summary {
+  color: rgba(86, 92, 84, 0.78);
+}
+
+html[data-theme="glow"] .worklog-calendar__day-label {
+  background: #fffbf6;
+  color: #223228;
+}
+
+html[data-theme="glow"] .worklog-calendar__scale {
+  background: #fffbf6;
+}
+
+html[data-theme="glow"] .worklog-calendar__day-label em {
+  color: rgba(86, 92, 84, 0.78);
+}
+
+html[data-theme="glow"] .worklog-calendar__people-button {
+  border-color: rgba(112, 94, 76, 0.16);
+  background: rgba(255, 255, 255, 0.72);
+  color: #223228;
+}
+
+html[data-theme="glow"] .worklog-calendar__people-button:hover {
+  border-color: rgba(63, 138, 106, 0.4);
+  background: rgba(120, 198, 163, 0.2);
+}
+
+html[data-theme="glow"] .worklog-calendar__people-option:hover {
+  background: rgba(191, 94, 51, 0.1);
+}
+
+html[data-theme="glow"] .worklog-calendar__people-option span {
+  color: rgba(86, 92, 84, 0.78);
+}
+
+html[data-theme="glow"] .worklog-calendar__day-summary {
+  background: #fffbf6;
+}
+
+html[data-theme="glow"] .worklog-calendar__zoom {
+  border-color: rgba(112, 94, 76, 0.14);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+html[data-theme="glow"] .worklog-calendar__zoom button {
+  color: #223228;
+}
+
+html[data-theme="glow"] .worklog-calendar__zoom button:hover:not(:disabled) {
+  background: rgba(191, 94, 51, 0.14);
+}
+
+html[data-theme="glow"] .worklog-calendar__track {
+  border-color: rgba(112, 94, 76, 0.12);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+html[data-theme="glow"] .worklog-calendar__grid-line {
+  background: rgba(112, 94, 76, 0.12);
+}
+
+html[data-theme="glow"] .worklog-calendar__gap {
+  background: repeating-linear-gradient(
+    135deg,
+    rgba(112, 94, 76, 0.22) 0,
+    rgba(112, 94, 76, 0.22) 2px,
+    transparent 2px,
+    transparent 7px
+  );
+}
+
+html[data-theme="glow"] .worklog-calendar__entry {
+  border-color: rgba(63, 138, 106, 0.45);
+  background: rgba(120, 198, 163, 0.3);
+  color: #223228;
+}
+
+html[data-theme="glow"] .worklog-calendar__entry:hover {
+  background: rgba(120, 198, 163, 0.44);
+}
+
+html[data-theme="glow"] .worklog-calendar__entry span {
+  color: rgba(86, 92, 84, 0.85);
+}
+
+html[data-theme="glow"] .worklog-calendar__entry.is-overlapping {
+  border-color: rgba(196, 84, 84, 0.6);
+  background: rgba(196, 84, 84, 0.24);
+}
+
+html[data-theme="glow"] .worklog-calendar__entry.is-overlapping:hover {
+  background: rgba(196, 84, 84, 0.34);
 }
 
 html[data-theme="glow"] .worklog-selected-chip {
@@ -8559,6 +9168,21 @@ html[data-theme="glow"] .jira-filter-connector select option {
   color: #223228;
 }
 
+html[data-theme="glow"] .jira-filter-item__where {
+  color: rgba(69, 80, 72, 0.5);
+}
+
+html[data-theme="glow"] .jira-filter-move__button {
+  border-color: rgba(34, 50, 40, 0.16);
+  background: rgba(34, 50, 40, 0.04);
+  color: rgba(34, 50, 40, 0.6);
+}
+
+html[data-theme="glow"] .jira-filter-move__button:hover:not(:disabled) {
+  background: rgba(34, 50, 40, 0.1);
+  color: #223228;
+}
+
 html[data-theme="glow"] .jira-filter-connector select {
   border-color: rgba(34, 50, 40, 0.18);
   background: rgba(34, 50, 40, 0.04);
@@ -8645,6 +9269,20 @@ html[data-theme="glow"] .jira-filter-status-option.is-selected {
 
 html[data-theme="glow"] .jira-filter-status-option__check {
   color: #2d7a52;
+}
+
+html[data-theme="glow"] .jira-filter-status-section__title {
+  color: rgba(34, 50, 40, 0.55);
+  background: rgba(34, 50, 40, 0.05);
+  border-bottom-color: rgba(34, 50, 40, 0.12);
+}
+
+html[data-theme="glow"] .jira-filter-status-section + .jira-filter-status-section .jira-filter-status-section__title {
+  border-top-color: rgba(34, 50, 40, 0.12);
+}
+
+html[data-theme="glow"] .jira-filter-status-option__detail {
+  color: rgba(34, 50, 40, 0.55);
 }
 
 html[data-theme="glow"] .queue-jira-panel__header h3,

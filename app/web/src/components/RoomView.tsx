@@ -6,6 +6,15 @@ import { Issue, IssueEvent, IssueQueueItem, JiraAssignableUser, JiraBoard, JiraI
 type HighlightMode = "none" | "most-frequent" | "highest";
 type JiraSuggestionStrategy = "highest" | "most-frequent" | "median" | "average";
 const JIRA_AUTO_OPEN_STORAGE_KEY = "sprinto.jira.auto_open_after_reveal";
+/**
+ * Whether another attempt could plausibly succeed. The server marks the failures it
+ * recognises as hopeless — rejected credentials, missing permissions — and anything
+ * unrecognised stays retryable so the offer is never withdrawn by accident.
+ */
+function canRetryAfter(error: unknown): boolean {
+  return !(error && typeof error === "object" && (error as { retryable?: boolean }).retryable === false);
+}
+
 const MANUAL_ADD_CLOSE_STORAGE_KEY = "sprinto.queue.close_after_manual_add";
 
 type AnimatedParticipant = {
@@ -230,6 +239,8 @@ export function RoomView({
   const lastJiraSearchQueryRef = useRef("");
   const [jiraBoards, setJiraBoards] = useState<JiraBoard[]>([]);
   const [jiraSprints, setJiraSprints] = useState<JiraSprint[]>([]);
+  const [jiraBoardsCanRetry, setJiraBoardsCanRetry] = useState(true);
+  const [jiraSprintsCanRetry, setJiraSprintsCanRetry] = useState(true);
   const [jiraStatuses, setJiraStatuses] = useState<JiraStatus[]>([]);
   const [jiraStatusesLoading, setJiraStatusesLoading] = useState(false);
   const [jiraStatusesError, setJiraStatusesError] = useState<string | null>(null);
@@ -1153,6 +1164,7 @@ export function RoomView({
     }
     setJiraBoardsLoading(true);
     setJiraBoardsError(null);
+    setJiraBoardsCanRetry(true);
     try {
       const boards = await onFetchJiraBoards();
       setJiraBoards(boards);
@@ -1160,6 +1172,7 @@ export function RoomView({
     } catch (error) {
       setJiraBoards([]);
       setJiraBoardsError(error instanceof Error ? error.message : "Failed to load Jira boards.");
+      setJiraBoardsCanRetry(canRetryAfter(error));
     } finally {
       setJiraBoardsLoading(false);
     }
@@ -1174,6 +1187,7 @@ export function RoomView({
     }
     setJiraSprintsLoading(true);
     setJiraSprintsError(null);
+    setJiraSprintsCanRetry(true);
     try {
       const sprints = await onFetchJiraSprints(boardId);
       setJiraSprints(sprints);
@@ -1182,6 +1196,7 @@ export function RoomView({
       setJiraSprints([]);
       setJiraSprintsBoardId("");
       setJiraSprintsError(error instanceof Error ? error.message : "Failed to load Jira sprints.");
+      setJiraSprintsCanRetry(canRetryAfter(error));
     } finally {
       setJiraSprintsLoading(false);
     }
@@ -2196,6 +2211,7 @@ export function RoomView({
                             loadingText="Loading boards…"
                             onOpen={() => void loadJiraBoards()}
                             onRetry={() => void loadJiraBoards(true)}
+                            canRetry={jiraBoardsCanRetry}
                             onSelect={handleJiraBoardChange}
                             options={jiraBoards.map((board) => ({ id: board.id, name: formatJiraBoardLabel(board) }))}
                             placeholder="Select board"
@@ -2216,6 +2232,7 @@ export function RoomView({
                               loadingText="Loading sprints…"
                               onOpen={() => void loadJiraSprints(jiraBoardId)}
                               onRetry={() => void loadJiraSprints(jiraBoardId, true)}
+                              canRetry={jiraSprintsCanRetry}
                               onSelect={setJiraSprintId}
                               options={jiraSprints.map((sprint) => ({ id: sprint.id, name: sprint.name, hint: sprint.state }))}
                               placeholder="Select sprint"

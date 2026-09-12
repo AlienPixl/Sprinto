@@ -151,6 +151,10 @@ export function App() {
   const canManageUpdates = user?.permissions.includes("manage_updates") || false;
   const jiraIntegrationEnabled = settings?.integrations?.jira?.enabled ?? overview?.settings.integrations.jira.enabled ?? false;
   const canViewWorklog = (user?.permissions.includes("worklog_view") || false) && jiraIntegrationEnabled;
+  const [worklogResultsView, setWorklogResultsView] = useState<"overview" | "calendar">("overview");
+  // The worklog calendar scrolls inside itself, so the shell holds the window height for it
+  // exactly as it does for a room.
+  const worklogCalendarLocked = view === "worklog" && canViewWorklog && worklogResultsView === "calendar";
   const effectiveSettings = settings || overview?.settings || null;
   const brandLogo = settings?.logoDataUrl || "";
   const footerCurrentVersion = effectiveSettings?.currentVersion || "";
@@ -979,7 +983,7 @@ export function App() {
   }
 
   return (
-    <div className={`app-shell ${view === "room" ? "app-shell--room" : ""}`.trim()}>
+    <div className={`app-shell ${view === "room" ? "app-shell--room" : ""} ${worklogCalendarLocked ? "app-shell--locked" : ""}`.trim()}>
       <header className="topbar">
         <button
           className="topbar__brand topbar__brand--button"
@@ -1118,7 +1122,7 @@ export function App() {
         </div>
       ) : null}
 
-      <main className={`app-main ${view === "room" ? "app-main--room" : ""}`.trim()}>
+      <main className={`app-main ${view === "room" ? "app-main--room" : ""} ${worklogCalendarLocked ? "app-main--locked" : ""}`.trim()}>
         {view === "admin" && canAccessAdmin ? (
           <AdminPanel
             onCreateRole={handleCreateRole}
@@ -1178,6 +1182,7 @@ export function App() {
             onLoadLinkTypes={getJiraWorklogLinkTypes}
             onLoadReport={getJiraWorklogReport}
             onLoadUsers={getJiraWorklogUsers}
+            onResultsViewChange={setWorklogResultsView}
           />
         ) : null}
 

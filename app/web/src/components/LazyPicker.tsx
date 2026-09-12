@@ -21,6 +21,8 @@ type LazyPickerProps = {
   disabled?: boolean;
   disabledText?: string;
   onRetry?: () => void;
+  /** False when the failure cannot change on a retry, e.g. rejected credentials. */
+  canRetry?: boolean;
   id?: string;
   ariaLabel?: string;
 };
@@ -44,6 +46,7 @@ export function LazyPicker({
   disabled = false,
   disabledText,
   onRetry,
+  canRetry = true,
   id,
   ariaLabel,
 }: LazyPickerProps) {
@@ -140,7 +143,7 @@ export function LazyPicker({
           ) : error ? (
             <div className="jira-filter-status-empty jira-filter-status-empty--error">
               <span>{error}</span>
-              {onRetry ? (
+              {onRetry && canRetry ? (
                 <button className="lazy-picker__retry" onClick={onRetry} type="button">Try again</button>
               ) : null}
             </div>
