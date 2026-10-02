@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RoomView } from "./RoomView";
 import type { Issue, IssueQueueItem, RoomSnapshot } from "../lib/types";
@@ -27,9 +27,9 @@ function makeIssue(overrides: Partial<Issue> = {}): Issue {
     externalIssueUrl: "",
     jiraFieldsSnapshot: {},
     jiraDeliveryStatus: {
-      estimate: { sentAt: null, sentByUserId: "", sentByDisplayName: "", mode: "", storyPointsValue: null, originalEstimate: "" },
-      report: { sentAt: null, sentByUserId: "", sentByDisplayName: "", finalValue: "", commentPosted: false, pdfUploaded: false },
-      assignee: { sentAt: null, sentByUserId: "", sentByDisplayName: "", accountId: "", displayName: "" },
+      estimate: { sentAt: null, sentByUserId: "", sentByDisplayName: "", mode: "", storyPointsValue: null, originalEstimate: "", lastErrorMessage: "", lastErrorAt: null },
+      report: { sentAt: null, sentByUserId: "", sentByDisplayName: "", finalValue: "", commentPosted: false, pdfUploaded: false, lastErrorMessage: "", lastErrorAt: null },
+      assignee: { sentAt: null, sentByUserId: "", sentByDisplayName: "", accountId: "", displayName: "", lastErrorMessage: "", lastErrorAt: null },
     },
     importedFromBoardId: "",
     importedFromSprintId: "",
@@ -45,15 +45,16 @@ function makeQueueItem(overrides: Partial<IssueQueueItem> = {}): IssueQueueItem 
     id: "queued-1",
     title: "PROJ-2 Fix bug",
     source: "manual",
+    status: "waiting",
     externalSource: "manual",
     externalIssueId: "",
     externalIssueKey: "",
     externalIssueUrl: "",
     jiraFieldsSnapshot: {},
     jiraDeliveryStatus: {
-      estimate: { sentAt: null, sentByUserId: "", sentByDisplayName: "", mode: "", storyPointsValue: null, originalEstimate: "" },
-      report: { sentAt: null, sentByUserId: "", sentByDisplayName: "", finalValue: "", commentPosted: false, pdfUploaded: false },
-      assignee: { sentAt: null, sentByUserId: "", sentByDisplayName: "", accountId: "", displayName: "" },
+      estimate: { sentAt: null, sentByUserId: "", sentByDisplayName: "", mode: "", storyPointsValue: null, originalEstimate: "", lastErrorMessage: "", lastErrorAt: null },
+      report: { sentAt: null, sentByUserId: "", sentByDisplayName: "", finalValue: "", commentPosted: false, pdfUploaded: false, lastErrorMessage: "", lastErrorAt: null },
+      assignee: { sentAt: null, sentByUserId: "", sentByDisplayName: "", accountId: "", displayName: "", lastErrorMessage: "", lastErrorAt: null },
     },
     importedFromBoardId: "",
     importedFromSprintId: "",
@@ -103,7 +104,7 @@ const defaultProps = {
   requireStoryId: false,
   onVote: vi.fn().mockResolvedValue(undefined),
   onReveal: noop,
-  onCancelIssue: noop,
+  onSkipIssue: noop,
   onClose: noop,
   onDeleteRoom: noop,
   onQueueIssue: vi.fn().mockResolvedValue(undefined),
@@ -190,17 +191,30 @@ describe("RoomView — active issue", () => {
   });
 });
 
-describe("RoomView — cancel issue", () => {
-  it("shows 'Return to queue' button for managers during active voting", () => {
+describe("RoomView — skip issue", () => {
+  it("shows 'Skip issue' button for managers during active voting", () => {
     renderRoom({ status: "voting" }, { canManageRound: true });
     const buttons = screen.getAllByRole("button");
-    expect(buttons.some((b) => b.textContent?.toLowerCase().includes("return to queue"))).toBe(true);
+    expect(buttons.some((b) => b.textContent?.toLowerCase().includes("skip issue"))).toBe(true);
   });
 
-  it("hides 'Return to queue' button for non-managers", () => {
+  it("hides 'Skip issue' button for non-managers", () => {
     renderRoom({ status: "voting" }, { canManageRound: false });
     const buttons = screen.queryAllByRole("button");
-    expect(buttons.some((b) => b.textContent?.toLowerCase().includes("return to queue"))).toBe(false);
+    expect(buttons.some((b) => b.textContent?.toLowerCase().includes("skip issue"))).toBe(false);
+  });
+
+  it("opens a confirmation modal and calls onSkipIssue when confirmed", async () => {
+    const onSkipIssue = vi.fn().mockResolvedValue(undefined);
+    renderRoom({ status: "voting" }, { canManageRound: true, onSkipIssue });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Skip issue" }));
+    });
+    const dialog = screen.getByRole("dialog");
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole("button", { name: "Skip issue" }));
+    });
+    expect(onSkipIssue).toHaveBeenCalled();
   });
 });
 
@@ -213,7 +227,38 @@ describe("RoomView — queue", () => {
 
   it("shows queue filter controls when there is a queue", () => {
     renderRoom({ issueQueue: [makeQueueItem()] });
-    expect(screen.getByRole("combobox", { name: /filter queue/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /filter queue/i })).toBeTruthy();
+  });
+
+  it("opens the queue filter panel with Waiting, Skipped and Completed options", async () => {
+    renderRoom({ issueQueue: [makeQueueItem()] });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /filter queue/i }));
+    });
+    expect(screen.getByRole("button", { name: "Waiting" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Skipped" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Completed" })).toBeTruthy();
+  });
+
+  it("defaults the queue filter to Waiting and Skipped", async () => {
+    renderRoom({ issueQueue: [makeQueueItem()] });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /filter queue/i }));
+    });
+    expect(screen.getByRole("button", { name: "Waiting" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "Skipped" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "Completed" }).getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("toggles a status out of the filter when its chip is clicked", async () => {
+    renderRoom({ issueQueue: [makeQueueItem()] });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /filter queue/i }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Skipped" }));
+    });
+    expect(screen.getByRole("button", { name: "Skipped" }).getAttribute("aria-pressed")).toBe("false");
   });
 
   it("offers manual add to managers", () => {
@@ -241,6 +286,110 @@ describe("RoomView — queue", () => {
       fireEvent.click(screen.getByRole("button", { name: /add manually/i }));
     });
     expect(screen.getByRole("textbox", { name: /^story id$/i })).toBeTruthy();
+  });
+
+  it("renders a skipped issue with a Skipped label", () => {
+    renderRoom({
+      status: "open",
+      issueQueue: [makeQueueItem({ id: "skip-1", title: "PROJ-9 Skipped issue", status: "skipped" })],
+    });
+    expect(screen.getAllByText("Skipped").length).toBeGreaterThan(0);
+  });
+
+  it("allows starting a skipped issue, same as a waiting one", async () => {
+    const onStartQueuedIssue = vi.fn().mockResolvedValue(undefined);
+    renderRoom(
+      { status: "open", issueQueue: [makeQueueItem({ id: "skip-1", title: "PROJ-9 Skipped issue", status: "skipped" })] },
+      { onStartQueuedIssue }
+    );
+    await act(async () => {
+      fireEvent.click(screen.getByText(/PROJ-9.*Skipped issue/));
+    });
+    expect(onStartQueuedIssue).toHaveBeenCalledWith("skip-1");
+  });
+
+  it("opens the Jira issue synchronously when starting the next queued issue", async () => {
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    let resolveStart: () => void = () => {};
+    const onStartQueuedIssue = vi.fn(() => new Promise<void>((resolve) => { resolveStart = resolve; }));
+    renderRoom(
+      {
+        status: "open",
+        autoOpenJiraUrl: true,
+        issueQueue: [
+          makeQueueItem({ id: "queued-1", title: "PROJ-2 Fix bug", externalSource: "jira", externalIssueUrl: "https://example.atlassian.net/browse/PROJ-2" }),
+        ],
+      },
+      { onStartQueuedIssue }
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /^next issue$/i }));
+
+    expect(clickSpy).toHaveBeenCalledTimes(1);
+    resolveStart();
+    clickSpy.mockRestore();
+  });
+
+  it("opens the Jira issue synchronously when selecting a queued issue manually from the list", async () => {
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    let resolveStart: () => void = () => {};
+    const onStartQueuedIssue = vi.fn(() => new Promise<void>((resolve) => { resolveStart = resolve; }));
+    renderRoom(
+      {
+        status: "open",
+        autoOpenJiraUrl: true,
+        issueQueue: [
+          makeQueueItem({ id: "queued-1", title: "PROJ-2 Fix bug", externalSource: "jira", externalIssueUrl: "https://example.atlassian.net/browse/PROJ-2" }),
+        ],
+      },
+      { onStartQueuedIssue }
+    );
+
+    fireEvent.click(screen.getByText(/PROJ-2.*Fix bug/));
+
+    expect(clickSpy).toHaveBeenCalledTimes(1);
+    resolveStart();
+    clickSpy.mockRestore();
+  });
+
+  it("does not open a tab when starting a manual (non-Jira) queued issue", async () => {
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    renderRoom(
+      {
+        status: "open",
+        autoOpenJiraUrl: true,
+        issueQueue: [makeQueueItem({ id: "queued-1", title: "PROJ-2 Fix bug", externalSource: "manual", externalIssueUrl: "" })],
+      },
+      { onStartQueuedIssue: vi.fn().mockResolvedValue(undefined) }
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^next issue$/i }));
+    });
+
+    expect(clickSpy).not.toHaveBeenCalled();
+    clickSpy.mockRestore();
+  });
+
+  it("does not open a tab when the room setting disables auto-open", async () => {
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    renderRoom(
+      {
+        status: "open",
+        autoOpenJiraUrl: false,
+        issueQueue: [
+          makeQueueItem({ id: "queued-1", title: "PROJ-2 Fix bug", externalSource: "jira", externalIssueUrl: "https://example.atlassian.net/browse/PROJ-2" }),
+        ],
+      },
+      { onStartQueuedIssue: vi.fn().mockResolvedValue(undefined) }
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^next issue$/i }));
+    });
+
+    expect(clickSpy).not.toHaveBeenCalled();
+    clickSpy.mockRestore();
   });
 });
 
@@ -274,23 +423,19 @@ describe("RoomView — revealed state", () => {
 });
 
 describe("RoomView — queue sort", () => {
-  it("renders the sort queue dropdown", () => {
-    renderRoom();
-    expect(screen.getByRole("combobox", { name: /sort queue/i })).toBeTruthy();
-  });
-
-  it("reflects the current queueSort value in the dropdown", () => {
+  it("renders the sort queue trigger showing the current value", () => {
     renderRoom({ queueSort: "priority" });
-    const select = screen.getByRole("combobox", { name: /sort queue/i }) as HTMLSelectElement;
-    expect(select.value).toBe("priority");
+    expect(screen.getByRole("button", { name: /sort queue/i }).textContent).toMatch(/priority/i);
   });
 
-  it("calls onUpdateQueueSort when the dropdown changes", async () => {
+  it("calls onUpdateQueueSort when a sort option is picked", async () => {
     const onUpdateQueueSort = vi.fn().mockResolvedValue(undefined);
-    renderRoom({}, { onUpdateQueueSort });
-    const select = screen.getByRole("combobox", { name: /sort queue/i });
+    renderRoom({ queueSort: "issue" }, { onUpdateQueueSort });
     await act(async () => {
-      fireEvent.change(select, { target: { value: "reporter" } });
+      fireEvent.click(screen.getByRole("button", { name: /sort queue/i }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Reporter" }));
     });
     expect(onUpdateQueueSort).toHaveBeenCalledWith("reporter");
   });
@@ -298,9 +443,11 @@ describe("RoomView — queue sort", () => {
   it("calls onUpdateQueueSort with 'priority' when priority is selected", async () => {
     const onUpdateQueueSort = vi.fn().mockResolvedValue(undefined);
     renderRoom({ queueSort: "issue" }, { onUpdateQueueSort });
-    const select = screen.getByRole("combobox", { name: /sort queue/i });
     await act(async () => {
-      fireEvent.change(select, { target: { value: "priority" } });
+      fireEvent.click(screen.getByRole("button", { name: /sort queue/i }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Priority" }));
     });
     expect(onUpdateQueueSort).toHaveBeenCalledWith("priority");
   });
@@ -547,6 +694,121 @@ describe("RoomView — Jira issue search", () => {
     expect(screen.getAllByText(/Jira is unreachable/).length).toBeGreaterThan(0);
     expect(screen.queryAllByText(/no matching jira issues/i)).toHaveLength(0);
   });
+
+  it("hides the selection toggle when nothing is selected", async () => {
+    const onSearchJiraIssues = vi.fn().mockResolvedValue([makeSearchResult()]);
+    await openJiraSearchPanel({ onSearchJiraIssues });
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText(/search jira issues/i), { target: { value: "login" } });
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^search$/i }));
+    });
+    expect(screen.queryByRole("button", { name: /selected/i })).toBeNull();
+  });
+
+  it("keeps previously selected issues checked after a new search", async () => {
+    const onSearchJiraIssues = vi
+      .fn()
+      .mockResolvedValueOnce([makeSearchResult()])
+      .mockResolvedValueOnce([
+        makeSearchResult(),
+        makeSearchResult({ id: "800", key: "PROJ-8", title: "Refactor deck editor" }),
+      ]);
+    await openJiraSearchPanel({ onSearchJiraIssues });
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText(/search jira issues/i), { target: { value: "login" } });
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^search$/i }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText(/select PROJ-7/i));
+    });
+
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText(/search jira issues/i), { target: { value: "proj" } });
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^search$/i }));
+    });
+
+    expect((screen.getByLabelText(/select PROJ-7/i) as HTMLInputElement).checked).toBe(true);
+  });
+
+  it("toggles between the normal results and the full selection made across searches", async () => {
+    const onSearchJiraIssues = vi
+      .fn()
+      .mockResolvedValueOnce([makeSearchResult()])
+      .mockResolvedValueOnce([makeSearchResult({ id: "900", key: "PROJ-9", title: "Tune cache eviction" })]);
+    await openJiraSearchPanel({ onSearchJiraIssues });
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText(/search jira issues/i), { target: { value: "login" } });
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^search$/i }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText(/select PROJ-7/i));
+    });
+
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText(/search jira issues/i), { target: { value: "cache" } });
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^search$/i }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText(/select PROJ-9/i));
+    });
+
+    // Current search results only show PROJ-9 — PROJ-7 is from the earlier search.
+    expect(screen.queryByText(/Login redirect loops/)).toBeNull();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /2 selected/i }));
+    });
+
+    expect(screen.getAllByText(/Login redirect loops/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Tune cache eviction/).length).toBeGreaterThan(0);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /2 selected/i }));
+    });
+
+    expect(screen.queryByText(/Login redirect loops/)).toBeNull();
+    expect(screen.getAllByText(/Tune cache eviction/).length).toBeGreaterThan(0);
+  });
+
+  it("returns to normal search results when a new search runs while viewing only selected", async () => {
+    const onSearchJiraIssues = vi
+      .fn()
+      .mockResolvedValueOnce([makeSearchResult()])
+      .mockResolvedValueOnce([makeSearchResult({ id: "900", key: "PROJ-9", title: "Tune cache eviction" })]);
+    await openJiraSearchPanel({ onSearchJiraIssues });
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText(/search jira issues/i), { target: { value: "login" } });
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^search$/i }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText(/select PROJ-7/i));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /1 selected/i }));
+    });
+
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText(/search jira issues/i), { target: { value: "cache" } });
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^search$/i }));
+    });
+
+    expect(screen.getAllByText(/Tune cache eviction/).length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: /1 selected/i }).getAttribute("aria-pressed")).toBe("false");
+  });
 });
 
 describe("RoomView — Jira writeback for a hand-picked issue", () => {
@@ -578,6 +840,75 @@ describe("RoomView — Jira writeback for a hand-picked issue", () => {
       .find((button) => button.textContent?.toLowerCase().includes("send to jira")) as HTMLButtonElement;
     expect(sendButton).toBeTruthy();
     expect(sendButton.disabled).toBe(false);
+  });
+
+  it("covers the Send to Jira panel with a failure overlay when the send fails", async () => {
+    const onApplyJiraIssueEstimate = vi.fn().mockRejectedValue(new Error("Jira is unreachable."));
+    renderRoom(
+      {
+        status: "revealed",
+        revealed: true,
+        currentIssue: makeIssue({
+          title: "PROJ-7 - Login redirect loops",
+          status: "revealed",
+          externalSource: "jira",
+          externalIssueId: "700",
+          externalIssueKey: "PROJ-7",
+          externalIssueUrl: "https://example.atlassian.net/browse/PROJ-7",
+          importedFromBoardId: "",
+          importedFromSprintId: "",
+        }),
+      },
+      { canSendToJira: true, canManageRound: true, jiraIntegration, onApplyJiraIssueEstimate }
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /^send to jira$/i }));
+    fireEvent.change(screen.getByLabelText(/^story points$/i), { target: { value: "5" } });
+
+    expect(screen.queryByText(/couldn't send to jira/i)).toBeNull();
+
+    const sendButtons = screen.getAllByRole("button", { name: /send to jira/i });
+    await act(async () => {
+      fireEvent.click(sendButtons[sendButtons.length - 1]);
+    });
+
+    expect(onApplyJiraIssueEstimate).toHaveBeenCalled();
+    expect(screen.getByText(/couldn't send to jira/i)).toBeTruthy();
+    expect(screen.getByText("Jira is unreachable.")).toBeTruthy();
+  });
+
+  it("clears a stale failure overlay when the Send to Jira panel is reopened", async () => {
+    const onApplyJiraIssueEstimate = vi.fn().mockRejectedValue(new Error("Jira is unreachable."));
+    renderRoom(
+      {
+        status: "revealed",
+        revealed: true,
+        currentIssue: makeIssue({
+          title: "PROJ-7 - Login redirect loops",
+          status: "revealed",
+          externalSource: "jira",
+          externalIssueId: "700",
+          externalIssueKey: "PROJ-7",
+          externalIssueUrl: "https://example.atlassian.net/browse/PROJ-7",
+          importedFromBoardId: "",
+          importedFromSprintId: "",
+        }),
+      },
+      { canSendToJira: true, canManageRound: true, jiraIntegration, onApplyJiraIssueEstimate }
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /^send to jira$/i }));
+    fireEvent.change(screen.getByLabelText(/^story points$/i), { target: { value: "5" } });
+    const sendButtons = screen.getAllByRole("button", { name: /send to jira/i });
+    await act(async () => {
+      fireEvent.click(sendButtons[sendButtons.length - 1]);
+    });
+    expect(screen.getByText(/couldn't send to jira/i)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^send to jira$/i }));
+
+    expect(screen.queryByText(/couldn't send to jira/i)).toBeNull();
   });
 });
 

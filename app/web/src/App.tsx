@@ -81,7 +81,7 @@ import {
   searchJiraIssues,
   importSearchedJiraIssues,
   prepareUserEntraMigration,
-  cancelIssue,
+  skipIssue,
 } from "./lib/api";
 import { type ActiveDirectoryTestResult, AdminOverview, Deck, JiraImportFilters, RoomEvent, RoomSnapshot, RoomSummary, SettingsOverview, ThemeId, User } from "./lib/types";
 
@@ -564,11 +564,11 @@ export function App() {
     await refreshRooms();
   }
 
-  async function handleCancelIssue() {
+  async function handleSkipIssue() {
     if (!activeRoomId) {
       return;
     }
-    const next = await cancelIssue(activeRoomId);
+    const next = await skipIssue(activeRoomId);
     setSnapshot(next);
     await refreshRooms();
   }
@@ -1227,7 +1227,7 @@ export function App() {
             onQueueIssue={handleQueueIssue}
             requireStoryId={Boolean(settings?.requireStoryId)}
             onReveal={handleReveal}
-            onCancelIssue={handleCancelIssue}
+            onSkipIssue={handleSkipIssue}
             onStartQueuedIssue={handleStartQueuedIssue}
             onUpdateAutoOpenJiraUrl={handleUpdateRoomAutoOpenJiraUrl}
             onUpdateHighlightMode={handleUpdateRoomHighlightMode}

@@ -66,6 +66,7 @@ export type IssueQueueItem = {
   id: string;
   title: string;
   source: string;
+  status: "waiting" | "skipped";
   externalSource: "jira" | "manual" | string;
   externalIssueId: string;
   externalIssueKey: string;
@@ -290,6 +291,8 @@ export type JiraDeliveryRecord = {
   sentAt: string | null;
   sentByUserId: string;
   sentByDisplayName: string;
+  lastErrorMessage: string;
+  lastErrorAt: string | null;
 };
 
 export type JiraEstimateDeliveryRecord = JiraDeliveryRecord & {

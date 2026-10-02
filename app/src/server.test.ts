@@ -137,7 +137,7 @@ vi.mock("./store.js", () => ({
   startQueuedIssue: vi.fn().mockResolvedValue(undefined),
   castVote: vi.fn().mockResolvedValue(undefined),
   revealIssue: vi.fn().mockResolvedValue(undefined),
-  cancelActiveIssue: vi.fn().mockResolvedValue(undefined),
+  skipActiveIssue: vi.fn().mockResolvedValue(undefined),
   getHistoryIssue: vi.fn().mockResolvedValue(null),
   touchPresence: vi.fn().mockResolvedValue(undefined),
   logAudit: vi.fn().mockResolvedValue(undefined),
@@ -251,9 +251,9 @@ vi.mock("sharp", () => ({
 const { app } = await import("./server.js");
 const {
   getUserBySession, createRoom, getDashboardCompat, logAudit, createSession,
-  getSettings, getRoomSnapshot,
+  getSettings, getRoomSnapshot, updateIssueJiraDeliveryStatus,
   updateRoomQueueSort, renameRoom, deleteRoom, closeRoom, joinRoom,
-  addQueueIssue, deleteQueueIssue, castVote, revealIssue, cancelActiveIssue,
+  addQueueIssue, deleteQueueIssue, castVote, revealIssue, skipActiveIssue,
   upsertSettings,
 } = await import("./store.js");
 const { resolveAuthenticatedUser } = await import("./login-flow.js");
@@ -681,20 +681,20 @@ describe("server routes", () => {
     });
   });
 
-  describe("POST /api/rooms/:roomId/cancel-issue", () => {
-    it("cancels the active issue for a room manager", async () => {
+  describe("POST /api/rooms/:roomId/skip-issue", () => {
+    it("skips the active issue for a room manager", async () => {
       vi.mocked(getUserBySession).mockResolvedValue(mockAdminUser);
       const res = await request(app)
-        .post("/api/rooms/room-1/cancel-issue")
+        .post("/api/rooms/room-1/skip-issue")
         .set("Authorization", "Bearer admin-token");
       expect(res.status).toBe(200);
-      expect(cancelActiveIssue).toHaveBeenCalledWith("room-1");
+      expect(skipActiveIssue).toHaveBeenCalledWith("room-1", "admin-1");
     });
 
     it("returns 403 when user cannot manage the room", async () => {
       vi.mocked(getUserBySession).mockResolvedValue(mockRegularUser);
       const res = await request(app)
-        .post("/api/rooms/room-1/cancel-issue")
+        .post("/api/rooms/room-1/skip-issue")
         .set("Authorization", "Bearer valid-token");
       expect(res.status).toBe(403);
     });
@@ -942,6 +942,93 @@ describe("server routes", () => {
         "PROJ-7",
         expect.objectContaining({ mode: "story-points", storyPointsValue: 5 })
       );
+    });
+
+    it("writes a jira.estimate.apply.failed audit entry when the Jira call fails", async () => {
+      const estimateFailureUser = { ...mockJiraUser, id: "user-jira-estimate-fail", sessionId: "session-jira-estimate-fail" };
+      vi.mocked(getUserBySession).mockResolvedValue(estimateFailureUser as any);
+      vi.mocked(getSettings).mockResolvedValue(jiraSettings as any);
+      vi.mocked(getRoomSnapshot).mockResolvedValue({
+        room: {
+          issueQueue: [],
+          issueHistory: [],
+          currentIssue: {
+            id: "issue-searched",
+            externalSource: "jira",
+            externalIssueId: "700",
+            externalIssueKey: "PROJ-7",
+            importedFromBoardId: "",
+            importedFromSprintId: "",
+          },
+        },
+      } as any);
+      vi.mocked(applyJiraEstimate).mockRejectedValue(Object.assign(new Error("Jira is unreachable."), { retryable: true }));
+      vi.mocked(logAudit).mockClear();
+      vi.mocked(updateIssueJiraDeliveryStatus).mockClear();
+
+      const res = await request(app)
+        .post("/api/rooms/room-1/jira/issues/issue-searched/apply-estimate")
+        .set("Authorization", "Bearer jira-token")
+        .send({ mode: "story-points", storyPointsValue: 5 });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("Jira is unreachable.");
+      expect(logAudit).toHaveBeenCalledWith(
+        estimateFailureUser.id,
+        "jira.estimate.apply.failed",
+        "room",
+        expect.objectContaining({
+          roomId: "room-1",
+          issueId: "issue-searched",
+          jiraIssueKey: "PROJ-7",
+          storyPointsValue: 5,
+          error: "Jira is unreachable.",
+        })
+      );
+
+      // The failure must also be persisted on the issue's Jira delivery status, so the room
+      // UI can show it even to someone who was not watching when the push failed.
+      const updater = vi.mocked(updateIssueJiraDeliveryStatus).mock.calls.at(-1)?.[1];
+      const nextStatus = updater?.({
+        estimate: { sentAt: "2026-01-01T00:00:00.000Z", sentByUserId: "", sentByDisplayName: "", mode: "", storyPointsValue: null, originalEstimate: "", lastErrorMessage: "", lastErrorAt: null },
+        report: {},
+        assignee: {},
+      } as any);
+      expect(nextStatus.estimate.lastErrorMessage).toBe("Jira is unreachable.");
+      expect(nextStatus.estimate.lastErrorAt).toEqual(expect.any(String));
+      expect(nextStatus.estimate.sentAt).toBe("2026-01-01T00:00:00.000Z");
+    });
+
+    it("still reports success when the Jira call succeeds but the audit-log write fails", async () => {
+      const auditFailureUser = { ...mockJiraUser, id: "user-jira-audit-fail", sessionId: "session-jira-audit-fail" };
+      vi.mocked(getUserBySession).mockResolvedValue(auditFailureUser as any);
+      vi.mocked(getSettings).mockResolvedValue(jiraSettings as any);
+      vi.mocked(getRoomSnapshot).mockResolvedValue({
+        room: {
+          issueQueue: [],
+          issueHistory: [],
+          currentIssue: {
+            id: "issue-searched",
+            externalSource: "jira",
+            externalIssueId: "700",
+            externalIssueKey: "PROJ-7",
+            importedFromBoardId: "",
+            importedFromSprintId: "",
+          },
+        },
+      } as any);
+      vi.mocked(applyJiraEstimate).mockResolvedValue({ updatedFields: ["storyPoints"] } as any);
+      vi.mocked(logAudit).mockRejectedValueOnce(new Error("audit_logs insert failed"));
+
+      const res = await request(app)
+        .post("/api/rooms/room-1/jira/issues/issue-searched/apply-estimate")
+        .set("Authorization", "Bearer jira-token")
+        .send({ mode: "story-points", storyPointsValue: 5 });
+
+      expect(res.status).toBe(200);
+      expect(res.body.updatedFields).toEqual(["storyPoints"]);
+
+      vi.mocked(logAudit).mockResolvedValue(undefined);
     });
   });
 

@@ -313,20 +313,10 @@ function normalizeJiraFilterNodes(rawNodes, depth) {
   return rawNodes.map((node) => normalizeJiraFilterNode(node, depth)).filter(Boolean);
 }
 
-export function normalizeJiraFilterConditions(rawConditions) {
-  const valid = normalizeJiraFilterNodes(rawConditions, 0);
-  return valid.length > 0 ? valid : defaultJiraImportFilters.conditions;
-}
-
-// Settings fall back to the default rule when nothing valid survives; a request payload
-// must not, because "no conditions" legitimately means "import everything".
+// An empty rule set legitimately means "import everything" — true for a room's own
+// filters and, now that admins can empty the default out too, for the saved default as well.
 export function normalizeJiraImportFilters(rawFilters) {
   const conditions = normalizeJiraFilterNodes(rawFilters?.conditions, 0);
-  return { conditions, connectors: normalizeJiraFilterConnectors(rawFilters?.connectors, conditions.length) };
-}
-
-function normalizeJiraDefaultImportFilters(rawFilters) {
-  const conditions = normalizeJiraFilterConditions(rawFilters?.conditions);
   return { conditions, connectors: normalizeJiraFilterConnectors(rawFilters?.connectors, conditions.length) };
 }
 
@@ -337,7 +327,7 @@ function normalizeJiraIntegrationSettings(settings = {}) {
     ? String(settings.originalEstimateMode || "").trim()
     : defaultJiraIntegrationSettings.originalEstimateMode;
 
-  const defaultImportFilters = normalizeJiraDefaultImportFilters(settings.defaultImportFilters);
+  const defaultImportFilters = normalizeJiraImportFilters(settings.defaultImportFilters);
 
   return {
     enabled: Boolean(settings.enabled),
@@ -1590,7 +1580,7 @@ export async function updateQueueIssue(roomId, issueId, titleOrPayload, source =
         external_meta_json = $9::jsonb,
         imported_board_id = $10,
         imported_sprint_id = $11
-      where id = $1 and room_id = $2 and state = 'queued'
+      where id = $1 and room_id = $2 and state in ('queued', 'skipped')
       returning id
     `,
     [
@@ -1615,7 +1605,7 @@ export async function updateQueueIssue(roomId, issueId, titleOrPayload, source =
 export async function deleteQueueIssue(roomId, issueId) {
   return tx(async (client) => {
     const issueResult = await client.query(
-      "select queue_position from issues where id = $1 and room_id = $2 and state = 'queued' limit 1",
+      "select state, queue_position from issues where id = $1 and room_id = $2 and state in ('queued', 'skipped') limit 1",
       [issueId, roomId]
     );
     const issue = issueResult.rows[0];
@@ -1623,11 +1613,13 @@ export async function deleteQueueIssue(roomId, issueId) {
       throw new Error("Queue item not found");
     }
 
-    await client.query("delete from issues where id = $1 and room_id = $2 and state = 'queued'", [issueId, roomId]);
-    await client.query(
-      "update issues set queue_position = queue_position - 1 where room_id = $1 and state = 'queued' and queue_position > $2",
-      [roomId, issue.queue_position]
-    );
+    await client.query("delete from issues where id = $1 and room_id = $2 and state in ('queued', 'skipped')", [issueId, roomId]);
+    if (issue.state === "queued") {
+      await client.query(
+        "update issues set queue_position = queue_position - 1 where room_id = $1 and state = 'queued' and queue_position > $2",
+        [roomId, issue.queue_position]
+      );
+    }
   });
 }
 
@@ -1637,7 +1629,7 @@ export async function startQueuedIssue(roomId, issueId) {
     if (roomStatus.rows[0]?.status === "closed") throw new Error("Cannot start an issue in a closed room");
     const active = await client.query("select id from issues where room_id = $1 and state = 'active' limit 1", [roomId]);
     if (active.rows[0]) throw new Error("Active issue already exists");
-    const nextIssue = await client.query("select * from issues where id = $1 and room_id = $2 and state = 'queued' limit 1", [issueId, roomId]);
+    const nextIssue = await client.query("select * from issues where id = $1 and room_id = $2 and state in ('queued', 'skipped') limit 1", [issueId, roomId]);
     if (!nextIssue.rows[0]) throw new Error("Queue item not found");
     const maxOrder = await client.query("select coalesce(max(order_index), 0)::int as order_index from issues where room_id = $1", [roomId]);
     const startedAt = new Date().toISOString();
@@ -1710,15 +1702,21 @@ export async function revealIssue(roomId, actorUserId) {
   });
 }
 
-export async function cancelActiveIssue(roomId) {
+export async function skipActiveIssue(roomId, actorUserId) {
   return tx(async (client) => {
     const active = await client.query("select * from issues where room_id = $1 and state = 'active' limit 1", [roomId]);
     const issue = active.rows[0];
-    if (!issue) throw new Error("No active issue to cancel");
+    if (!issue) throw new Error("No active issue to skip");
+    const actor = await client.query("select display_name from users where id = $1", [actorUserId]);
+    const actorName = actor.rows[0]?.display_name || "Someone";
+    const ms = Math.max(0, Math.floor(Date.now() - new Date(issue.started_at).getTime()));
     await client.query("delete from votes where issue_id = $1", [issue.id]);
-    await client.query("delete from issue_events where issue_id = $1", [issue.id]);
-    await client.query("update issues set queue_position = queue_position + 1 where room_id = $1 and state = 'queued'", [roomId]);
-    await client.query("update issues set state = 'queued', queue_position = 1, order_index = 0, started_at = null where id = $1", [issue.id]);
+    await client.query("delete from issue_events where issue_id = $1 and event_type in ('join', 'vote')", [issue.id]);
+    await client.query(
+      "insert into issue_events (id, issue_id, event_type, user_id, label, event_ms, payload_json) values ($1, $2, 'skip', $3, $4, $5, $6::jsonb)",
+      [newId(), issue.id, actorUserId, `${actorName} skipped issue`, ms, JSON.stringify({ occurredAt: new Date().toISOString() })]
+    );
+    await client.query("update issues set state = 'skipped', queue_position = 0, order_index = 0, started_at = null where id = $1", [issue.id]);
     await client.query("update rooms set status = 'open', status_changed_at = now() where id = $1", [roomId]);
   });
 }
@@ -2970,7 +2968,7 @@ const permissionCatalog = [
   { name: "view_history", description: "Access the round history panel." },
   { name: "queue_issues", description: "Manage the room issue queue." },
   { name: "reveal_votes", description: "Reveal all votes for the current issue." },
-  { name: "close_poker", description: "End the current estimation round." },
+  { name: "close_poker", description: "Close the room once the current round is revealed." },
   { name: "create_room", description: "Create new rooms." },
   { name: "delete_room", description: "Delete existing rooms." },
   { name: "rename_room", description: "Rename existing rooms." },
@@ -3066,6 +3064,8 @@ function emptyJiraDeliveryStatus() {
       mode: "",
       storyPointsValue: null,
       originalEstimate: "",
+      lastErrorMessage: "",
+      lastErrorAt: null,
     },
     report: {
       sentAt: null,
@@ -3074,6 +3074,8 @@ function emptyJiraDeliveryStatus() {
       finalValue: "",
       commentPosted: false,
       pdfUploaded: false,
+      lastErrorMessage: "",
+      lastErrorAt: null,
     },
     assignee: {
       sentAt: null,
@@ -3081,6 +3083,8 @@ function emptyJiraDeliveryStatus() {
       sentByDisplayName: "",
       accountId: "",
       displayName: "",
+      lastErrorMessage: "",
+      lastErrorAt: null,
     },
   };
 }
@@ -3098,6 +3102,8 @@ function normalizeJiraDeliveryStatus(value = {}) {
       mode: ["story-points", "original-estimate", "both"].includes(estimate.mode) ? estimate.mode : "",
       storyPointsValue: Number.isFinite(Number(estimate.storyPointsValue)) ? Number(estimate.storyPointsValue) : null,
       originalEstimate: typeof estimate.originalEstimate === "string" ? estimate.originalEstimate : "",
+      lastErrorMessage: typeof estimate.lastErrorMessage === "string" ? estimate.lastErrorMessage : "",
+      lastErrorAt: typeof estimate.lastErrorAt === "string" && estimate.lastErrorAt ? estimate.lastErrorAt : null,
     },
     report: {
       sentAt: typeof report.sentAt === "string" && report.sentAt ? report.sentAt : null,
@@ -3106,6 +3112,8 @@ function normalizeJiraDeliveryStatus(value = {}) {
       finalValue: typeof report.finalValue === "string" ? report.finalValue : "",
       commentPosted: Boolean(report.commentPosted),
       pdfUploaded: Boolean(report.pdfUploaded),
+      lastErrorMessage: typeof report.lastErrorMessage === "string" ? report.lastErrorMessage : "",
+      lastErrorAt: typeof report.lastErrorAt === "string" && report.lastErrorAt ? report.lastErrorAt : null,
     },
     assignee: {
       sentAt: typeof assignee.sentAt === "string" && assignee.sentAt ? assignee.sentAt : null,
@@ -3113,6 +3121,8 @@ function normalizeJiraDeliveryStatus(value = {}) {
       sentByDisplayName: typeof assignee.sentByDisplayName === "string" ? assignee.sentByDisplayName : "",
       accountId: typeof assignee.accountId === "string" ? assignee.accountId : "",
       displayName: typeof assignee.displayName === "string" ? assignee.displayName : "",
+      lastErrorMessage: typeof assignee.lastErrorMessage === "string" ? assignee.lastErrorMessage : "",
+      lastErrorAt: typeof assignee.lastErrorAt === "string" && assignee.lastErrorAt ? assignee.lastErrorAt : null,
     },
   };
 }
@@ -3140,6 +3150,9 @@ function emptyIssue(startedAt = null) {
 }
 
 function issueOccurredAt(issueRow, eventRow) {
+  if (eventRow.event_type === "skip" && eventRow.payload_json?.occurredAt) {
+    return eventRow.payload_json.occurredAt;
+  }
   if (!issueRow.started_at) {
     return eventRow.created_at;
   }
@@ -3548,7 +3561,10 @@ export async function getRoomSnapshot(roomId, currentUserId) {
             }))
           : playbackEvents.map((event) => ({
               type: event.type,
-              occurredAt: new Date(new Date(issueRow.started_at || room.created_at).getTime() + (event.atMs || 0)).toISOString(),
+              occurredAt:
+                event.type === "skip" && event.payload?.occurredAt
+                  ? event.payload.occurredAt
+                  : new Date(new Date(issueRow.started_at || room.created_at).getTime() + (event.atMs || 0)).toISOString(),
               participantId: event.userId || undefined,
               participantName: playbackUsersById.get(event.userId)?.display_name || undefined,
               participantCanVote: playbackUsersById.get(event.userId)?.can_vote,
@@ -3595,12 +3611,13 @@ export async function getRoomSnapshot(roomId, currentUserId) {
       currentIssue,
       issueHistory: historyIssues,
       issueQueue: issues
-        .filter((issue) => issue.state === "queued")
+        .filter((issue) => issue.state === "queued" || issue.state === "skipped")
         .sort((left, right) => left.queue_position - right.queue_position)
         .map((issue) => ({
           id: issue.id,
           title: issue.title,
           source: issue.source,
+          status: issue.state === "skipped" ? "skipped" : "waiting",
           ...toCompatJiraIssue(issue),
         })),
       revealed,

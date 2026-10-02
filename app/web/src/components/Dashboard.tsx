@@ -1,9 +1,16 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Deck, RoomCategory, RoomSummary } from "../lib/types";
 
-const FILTERS = ["open", "voting", "revealed", "closed", "all"] as const;
+const FILTERS = ["all", "open", "voting", "revealed", "closed"] as const;
 type Filter = (typeof FILTERS)[number];
 const DEFAULT_ACTIVE_FILTERS: Filter[] = ["open", "voting", "revealed"];
+const FILTER_LABELS: Record<Filter, string> = {
+  all: "All",
+  open: "Open",
+  voting: "Voting",
+  revealed: "Revealed",
+  closed: "Closed",
+};
 
 type DashboardProps = {
   rooms: RoomSummary[];
@@ -25,7 +32,7 @@ export function Dashboard({ rooms, decks, defaultDeckName = "", roomCategories =
   const [activeFilters, setActiveFilters] = useState<Filter[]>(DEFAULT_ACTIVE_FILTERS);
   const [statusFilterOpen, setStatusFilterOpen] = useState(false);
   const [categoryFilterOpen, setCategoryFilterOpen] = useState(false);
-  const [categoryFilter, setCategoryFilter] = useState("");
+  const [categoryFilters, setCategoryFilters] = useState<string[]>([]);
   const [deckMenuOpen, setDeckMenuOpen] = useState(false);
   const deckMenuRef = useRef<HTMLDivElement | null>(null);
 
@@ -42,11 +49,11 @@ export function Dashboard({ rooms, decks, defaultDeckName = "", roomCategories =
       rooms
         .filter((room) => {
           const statusMatch = activeFilters.includes("all") || activeFilters.includes(room.status as Filter);
-          const categoryMatch = !categoryFilter || room.categoryId === categoryFilter;
+          const categoryMatch = categoryFilters.length === 0 || categoryFilters.includes(room.categoryId ?? "");
           return statusMatch && categoryMatch;
         })
         .sort((left, right) => statusOrder(left.status) - statusOrder(right.status)),
-    [activeFilters, categoryFilter, rooms]
+    [activeFilters, categoryFilters, rooms]
   );
 
   useEffect(() => {
@@ -187,6 +194,9 @@ export function Dashboard({ rooms, decks, defaultDeckName = "", roomCategories =
                   onClick={() => { setStatusFilterOpen((o) => !o); setCategoryFilterOpen(false); }}
                   type="button"
                 >
+                  <span aria-hidden="true" className="dashboard-rooms__filter-icon">
+                    <StatusIcon />
+                  </span>
                   Status {statusFilterOpen ? "▾" : "▸"}
                 </button>
                 {statusFilterOpen ? (
@@ -208,7 +218,7 @@ export function Dashboard({ rooms, decks, defaultDeckName = "", roomCategories =
                         }
                         type="button"
                       >
-                        {option}
+                        {FILTER_LABELS[option]}
                       </button>
                     ))}
                   </div>
@@ -222,22 +232,29 @@ export function Dashboard({ rooms, decks, defaultDeckName = "", roomCategories =
                     onClick={() => { setCategoryFilterOpen((o) => !o); setStatusFilterOpen(false); }}
                     type="button"
                   >
+                    <span aria-hidden="true" className="dashboard-rooms__filter-icon">
+                      <CategoryIcon />
+                    </span>
                     Category {categoryFilterOpen ? "▾" : "▸"}
                   </button>
                   {categoryFilterOpen ? (
                     <div className="filter-dropdown__panel filter-dropdown__panel--right">
                       <button
-                        className={`filter-chip ${!categoryFilter ? "is-active" : ""}`}
-                        onClick={() => setCategoryFilter("")}
+                        className={`filter-chip ${categoryFilters.length === 0 ? "is-active" : ""}`}
+                        onClick={() => setCategoryFilters([])}
                         type="button"
                       >
-                        all
+                        All
                       </button>
                       {roomCategories.map((cat) => (
                         <button
                           key={cat.id}
-                          className={`filter-chip ${categoryFilter === cat.id ? "is-active" : ""}`}
-                          onClick={() => setCategoryFilter(categoryFilter === cat.id ? "" : cat.id)}
+                          className={`filter-chip ${categoryFilters.includes(cat.id) ? "is-active" : ""}`}
+                          onClick={() =>
+                            setCategoryFilters((current) =>
+                              current.includes(cat.id) ? current.filter((id) => id !== cat.id) : [...current, cat.id]
+                            )
+                          }
                           type="button"
                         >
                           {cat.name}
@@ -287,6 +304,27 @@ export function Dashboard({ rooms, decks, defaultDeckName = "", roomCategories =
         </section>
       </section>
     </div>
+  );
+}
+
+function StatusIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M5 7.5h14" />
+      <path d="M5 12h8" />
+      <path d="M5 16.5h11" />
+      <circle cx="17.5" cy="12" r="1.5" fill="currentColor" stroke="none" />
+      <circle cx="16" cy="16.5" r="1.5" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+function CategoryIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M11.5 4.5H6a1.5 1.5 0 0 0-1.5 1.5v5.5a1.5 1.5 0 0 0 .44 1.06l7 7a1.5 1.5 0 0 0 2.12 0l5.5-5.5a1.5 1.5 0 0 0 0-2.12l-7-7a1.5 1.5 0 0 0-1.06-.44Z" />
+      <circle cx="8.75" cy="8.75" r="1.25" fill="currentColor" stroke="none" />
+    </svg>
   );
 }
 

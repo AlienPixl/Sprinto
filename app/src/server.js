@@ -108,7 +108,7 @@ import {
   saveRoleCompat,
   saveUserCompat,
   revealIssue,
-  cancelActiveIssue,
+  skipActiveIssue,
   reactivateUser,
   resolveRoleNamesForAdGroups,
   resolveRoleNamesForEntraClaims,
@@ -192,6 +192,22 @@ function jiraFailure(res, error, fallback) {
     error: error instanceof Error ? error.message : fallback,
     retryable: error?.retryable !== false,
   }, 400);
+}
+
+async function logAuditSafe(actorUserId, action, target, meta) {
+  try {
+    await logAudit(actorUserId, action, target, meta);
+  } catch (error) {
+    console.error(`Failed to write audit log for "${action}":`, error);
+  }
+}
+
+async function updateIssueJiraDeliveryStatusSafe(issueId, updater) {
+  try {
+    await updateIssueJiraDeliveryStatus(issueId, updater);
+  } catch (error) {
+    console.error(`Failed to update Jira delivery status for issue ${issueId}:`, error);
+  }
 }
 
 function toAuditDisplay(value) {
@@ -1955,11 +1971,11 @@ app.post("/api/rooms/:roomId/reveal", requireUser, roomMutationLimiter, async (r
   }
 });
 
-app.post("/api/rooms/:roomId/cancel-issue", requireUser, roomMutationLimiter, async (req, res) => {
+app.post("/api/rooms/:roomId/skip-issue", requireUser, roomMutationLimiter, async (req, res) => {
   if (!capabilitiesFor(req.user).canManageRoom) return json(res, { error: "Forbidden" }, 403);
   try {
-    await cancelActiveIssue(req.params.roomId);
-    await logAudit(req.user.id, "room.issue.cancel", "room", { roomId: req.params.roomId });
+    await skipActiveIssue(req.params.roomId, req.user.id);
+    await logAudit(req.user.id, "room.issue.skip", "room", { roomId: req.params.roomId });
     await publishRoom(req.params.roomId);
     await publishDashboard();
     json(res, await getRoomSnapshot(req.params.roomId, req.user.id));
@@ -2315,9 +2331,10 @@ app.get("/api/rooms/:roomId/jira/issues/:issueId/assignees", requireUser, requir
 });
 
 app.post("/api/rooms/:roomId/jira/issues/:issueId/apply-estimate", requireUser, requireJiraEstimateWrite, jiraLimiter, async (req, res) => {
+  let matchingIssue = null;
   try {
     const snapshot = await getRoomSnapshot(req.params.roomId, req.user.id);
-    const matchingIssue = findRoomJiraIssue(snapshot, req.params.issueId);
+    matchingIssue = findRoomJiraIssue(snapshot, req.params.issueId);
     if (!matchingIssue?.externalIssueKey) {
       return json(res, { error: "Linked Jira issue not found." }, 404);
     }
@@ -2338,9 +2355,11 @@ app.post("/api/rooms/:roomId/jira/issues/:issueId/apply-estimate", requireUser, 
         mode: req.body?.mode || "story-points",
         storyPointsValue: Number.isFinite(Number(req.body?.storyPointsValue)) ? Number(req.body?.storyPointsValue) : current.estimate.storyPointsValue,
         originalEstimate: typeof req.body?.originalEstimate === "string" ? req.body.originalEstimate : current.estimate.originalEstimate,
+        lastErrorMessage: "",
+        lastErrorAt: null,
       },
     }));
-    await logAudit(req.user.id, "jira.estimate.apply", "room", {
+    await logAuditSafe(req.user.id, "jira.estimate.apply", "room", {
       roomId: req.params.roomId,
       issueId: req.params.issueId,
       jiraIssueKey: matchingIssue.externalIssueKey,
@@ -2350,14 +2369,33 @@ app.post("/api/rooms/:roomId/jira/issues/:issueId/apply-estimate", requireUser, 
     });
     json(res, { ...result, snapshot: await getRoomSnapshot(req.params.roomId, req.user.id) });
   } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Failed to apply Jira estimate.";
+    await logAuditSafe(req.user.id, "jira.estimate.apply.failed", "room", {
+      roomId: req.params.roomId,
+      issueId: req.params.issueId,
+      jiraIssueKey: matchingIssue?.externalIssueKey || null,
+      mode: req.body?.mode || "story-points",
+      storyPointsValue: req.body?.storyPointsValue,
+      originalEstimate: req.body?.originalEstimate,
+      error: errorMessage,
+    });
+    await updateIssueJiraDeliveryStatusSafe(req.params.issueId, (current) => ({
+      ...current,
+      estimate: {
+        ...current.estimate,
+        lastErrorMessage: errorMessage,
+        lastErrorAt: new Date().toISOString(),
+      },
+    }));
     jiraFailure(res, error, "Failed to apply Jira estimate.");
   }
 });
 
 app.post("/api/rooms/:roomId/jira/issues/:issueId/assignee", requireUser, requireJiraEstimateWrite, jiraLimiter, async (req, res) => {
+  let matchingIssue = null;
   try {
     const snapshot = await getRoomSnapshot(req.params.roomId, req.user.id);
-    const matchingIssue = findRoomJiraIssue(snapshot, req.params.issueId);
+    matchingIssue = findRoomJiraIssue(snapshot, req.params.issueId);
     if (!matchingIssue?.externalIssueKey) {
       return json(res, { error: "Linked Jira issue not found." }, 404);
     }
@@ -2379,9 +2417,11 @@ app.post("/api/rooms/:roomId/jira/issues/:issueId/assignee", requireUser, requir
         sentByDisplayName: req.user.displayName || req.user.username || "",
         accountId: result.accountId,
         displayName: result.accountId ? displayName : "",
+        lastErrorMessage: "",
+        lastErrorAt: null,
       },
     }));
-    await logAudit(req.user.id, "jira.assignee.apply", "room", {
+    await logAuditSafe(req.user.id, "jira.assignee.apply", "room", {
       roomId: req.params.roomId,
       issueId: req.params.issueId,
       jiraIssueKey: matchingIssue.externalIssueKey,
@@ -2390,14 +2430,31 @@ app.post("/api/rooms/:roomId/jira/issues/:issueId/assignee", requireUser, requir
     });
     json(res, { ...result, snapshot: await getRoomSnapshot(req.params.roomId, req.user.id) });
   } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Failed to update Jira assignee.";
+    await logAuditSafe(req.user.id, "jira.assignee.apply.failed", "room", {
+      roomId: req.params.roomId,
+      issueId: req.params.issueId,
+      jiraIssueKey: matchingIssue?.externalIssueKey || null,
+      accountId: typeof req.body?.accountId === "string" ? req.body.accountId : null,
+      error: errorMessage,
+    });
+    await updateIssueJiraDeliveryStatusSafe(req.params.issueId, (current) => ({
+      ...current,
+      assignee: {
+        ...current.assignee,
+        lastErrorMessage: errorMessage,
+        lastErrorAt: new Date().toISOString(),
+      },
+    }));
     jiraFailure(res, error, "Failed to update Jira assignee.");
   }
 });
 
 app.post("/api/rooms/:roomId/jira/issues/:issueId/report", requireUser, requireJiraReportPosting, jiraLimiter, async (req, res) => {
+  let roomIssue = null;
   try {
     const snapshot = await getRoomSnapshot(req.params.roomId, req.user.id);
-    const roomIssue = [snapshot?.room.currentIssue, ...(snapshot?.room.issueHistory || [])]
+    roomIssue = [snapshot?.room.currentIssue, ...(snapshot?.room.issueHistory || [])]
       .filter(Boolean)
       .find((issue) => issue.id === req.params.issueId);
     if (!roomIssue?.externalIssueKey) {
@@ -2457,9 +2514,11 @@ app.post("/api/rooms/:roomId/jira/issues/:issueId/report", requireUser, requireJ
         finalValue: report.finalValue,
         commentPosted: includeComment,
         pdfUploaded: includePdf,
+        lastErrorMessage: "",
+        lastErrorAt: null,
       },
     }));
-    await logAudit(req.user.id, "jira.report.post", "room", {
+    await logAuditSafe(req.user.id, "jira.report.post", "room", {
       roomId: req.params.roomId,
       issueId: req.params.issueId,
       jiraIssueKey: roomIssue.externalIssueKey,
@@ -2469,6 +2528,24 @@ app.post("/api/rooms/:roomId/jira/issues/:issueId/report", requireUser, requireJ
     });
     json(res, { ...result, snapshot: await getRoomSnapshot(req.params.roomId, req.user.id) });
   } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Failed to post Jira report.";
+    await logAuditSafe(req.user.id, "jira.report.post.failed", "room", {
+      roomId: req.params.roomId,
+      issueId: req.params.issueId,
+      jiraIssueKey: roomIssue?.externalIssueKey || null,
+      includeComment: Boolean(req.body?.includeComment),
+      includePdf: Boolean(req.body?.includePdf),
+      finalValue: req.body?.finalValue,
+      error: errorMessage,
+    });
+    await updateIssueJiraDeliveryStatusSafe(req.params.issueId, (current) => ({
+      ...current,
+      report: {
+        ...current.report,
+        lastErrorMessage: errorMessage,
+        lastErrorAt: new Date().toISOString(),
+      },
+    }));
     jiraFailure(res, error, "Failed to post Jira report.");
   }
 });

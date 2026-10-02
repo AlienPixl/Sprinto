@@ -9,11 +9,17 @@ const statuses: JiraStatus[] = [
   { id: "99", name: "Done" },
 ];
 
-function Harness({ initial }: { initial: JiraImportFilters }) {
+function Harness({ initial, allowEmptyRoot }: { initial: JiraImportFilters; allowEmptyRoot?: boolean }) {
   const [filters, setFilters] = useState<JiraImportFilters>(initial);
   return (
     <>
-      <JiraFilterEditor filters={filters} onChange={setFilters} statuses={statuses} labels={["auto", "dor"]} />
+      <JiraFilterEditor
+        filters={filters}
+        onChange={setFilters}
+        statuses={statuses}
+        labels={["auto", "dor"]}
+        allowEmptyRoot={allowEmptyRoot}
+      />
       <pre data-testid="state">{JSON.stringify(filters)}</pre>
     </>
   );
@@ -94,6 +100,43 @@ describe("JiraFilterEditor", () => {
   it("keeps the last root condition undeletable", () => {
     render(<Harness initial={singleCondition} />);
     expect(screen.queryByLabelText("Remove condition")).toBeNull();
+  });
+
+  it("lets the last root condition be removed when allowEmptyRoot is set", () => {
+    render(<Harness initial={singleCondition} allowEmptyRoot />);
+
+    fireEvent.click(screen.getByLabelText("Remove condition"));
+
+    const filters = currentFilters();
+    expect(filters.conditions).toEqual([]);
+    expect(filters.connectors).toEqual([]);
+    expect(screen.getByText("No rules — every issue in the import scope will be imported.")).toBeTruthy();
+  });
+
+  it("keeps the remove button on every remaining root condition while emptying out, with allowEmptyRoot", () => {
+    render(
+      <Harness
+        initial={{
+          conditions: [
+            { field: "storyPoints", operator: "IS EMPTY", value: null },
+            { field: "labels", operator: "IN", value: ["dor"] },
+          ],
+          connectors: ["AND"],
+        }}
+        allowEmptyRoot
+      />
+    );
+
+    let removeButtons = screen.getAllByLabelText("Remove condition");
+    expect(removeButtons).toHaveLength(2);
+    fireEvent.click(removeButtons[0]);
+
+    expect(currentFilters().conditions).toEqual([{ field: "labels", operator: "IN", value: ["dor"] }]);
+    removeButtons = screen.getAllByLabelText("Remove condition");
+    expect(removeButtons).toHaveLength(1);
+
+    fireEvent.click(removeButtons[0]);
+    expect(currentFilters().conditions).toEqual([]);
   });
 
   it("shows the evaluated expression with its parentheses", () => {

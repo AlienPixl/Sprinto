@@ -104,3 +104,94 @@ describe("Dashboard", () => {
     expect(onCreateRoom).toHaveBeenCalledWith("My Room", "Fibonacci", "");
   });
 });
+
+describe("Dashboard — category filter (multi-select)", () => {
+  const roomsByCategory: RoomSummary[] = [
+    { id: "room-1", name: "Planning room", activeIssueTitle: "-", status: "open", categoryId: "cat-1", participantCount: 0, voterCount: 0, viewerCount: 0, revealed: false, completedCount: 0, createdAt: "2026-05-01T00:00:00.000Z" },
+    { id: "room-2", name: "Backlog room", activeIssueTitle: "-", status: "open", categoryId: "cat-2", participantCount: 0, voterCount: 0, viewerCount: 0, revealed: false, completedCount: 0, createdAt: "2026-05-01T00:00:00.000Z" },
+    { id: "room-3", name: "Uncategorized room", activeIssueTitle: "-", status: "open", categoryId: null, participantCount: 0, voterCount: 0, viewerCount: 0, revealed: false, completedCount: 0, createdAt: "2026-05-01T00:00:00.000Z" },
+  ];
+
+  function openCategoryFilter() {
+    fireEvent.click(screen.getByRole("button", { name: /^category/i }));
+  }
+
+  it("shows every room when no category chip is selected", () => {
+    render(
+      <Dashboard
+        rooms={roomsByCategory}
+        decks={decks}
+        canCreateRoom={true}
+        onOpenRoom={vi.fn()}
+        onCreateRoom={vi.fn()}
+        roomCategoriesEnabled={true}
+        roomCategories={categories}
+      />
+    );
+    expect(screen.getByText("Planning room")).toBeTruthy();
+    expect(screen.getByText("Backlog room")).toBeTruthy();
+    expect(screen.getByText("Uncategorized room")).toBeTruthy();
+  });
+
+  it("selecting two category chips shows rooms matching either one", () => {
+    render(
+      <Dashboard
+        rooms={roomsByCategory}
+        decks={decks}
+        canCreateRoom={true}
+        onOpenRoom={vi.fn()}
+        onCreateRoom={vi.fn()}
+        roomCategoriesEnabled={true}
+        roomCategories={categories}
+      />
+    );
+    openCategoryFilter();
+    fireEvent.click(screen.getByRole("button", { name: "Sprint Planning" }));
+    fireEvent.click(screen.getByRole("button", { name: "Backlog Refinement" }));
+
+    expect(screen.getByText("Planning room")).toBeTruthy();
+    expect(screen.getByText("Backlog room")).toBeTruthy();
+    expect(screen.queryByText("Uncategorized room")).toBeNull();
+  });
+
+  it("clicking a selected chip again removes it from the filter", () => {
+    render(
+      <Dashboard
+        rooms={roomsByCategory}
+        decks={decks}
+        canCreateRoom={true}
+        onOpenRoom={vi.fn()}
+        onCreateRoom={vi.fn()}
+        roomCategoriesEnabled={true}
+        roomCategories={categories}
+      />
+    );
+    openCategoryFilter();
+    fireEvent.click(screen.getByRole("button", { name: "Sprint Planning" }));
+    fireEvent.click(screen.getByRole("button", { name: "Sprint Planning" }));
+
+    expect(screen.getByText("Planning room")).toBeTruthy();
+    expect(screen.getByText("Backlog room")).toBeTruthy();
+    expect(screen.getByText("Uncategorized room")).toBeTruthy();
+  });
+
+  it("clicking 'all' clears the category selection", () => {
+    render(
+      <Dashboard
+        rooms={roomsByCategory}
+        decks={decks}
+        canCreateRoom={true}
+        onOpenRoom={vi.fn()}
+        onCreateRoom={vi.fn()}
+        roomCategoriesEnabled={true}
+        roomCategories={categories}
+      />
+    );
+    openCategoryFilter();
+    fireEvent.click(screen.getByRole("button", { name: "Sprint Planning" }));
+    expect(screen.queryByText("Backlog room")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "All" }));
+    expect(screen.getByText("Backlog room")).toBeTruthy();
+  });
+});

@@ -647,6 +647,8 @@ export async function getHistoryIssue(roomId: string, issueId: string): Promise<
         mode: "",
         storyPointsValue: null,
         originalEstimate: "",
+        lastErrorMessage: "",
+        lastErrorAt: null,
       },
       report: {
         sentAt: null,
@@ -655,6 +657,8 @@ export async function getHistoryIssue(roomId: string, issueId: string): Promise<
         finalValue: "",
         commentPosted: false,
         pdfUploaded: false,
+        lastErrorMessage: "",
+        lastErrorAt: null,
       },
       assignee: {
         sentAt: null,
@@ -662,6 +666,8 @@ export async function getHistoryIssue(roomId: string, issueId: string): Promise<
         sentByDisplayName: "",
         accountId: "",
         displayName: "",
+        lastErrorMessage: "",
+        lastErrorAt: null,
       },
     },
     importedFromBoardId: issue.importedFromBoardId || "",
@@ -799,8 +805,8 @@ export async function startQueuedIssue(roomId: string, issueId: string): Promise
   });
 }
 
-export async function cancelIssue(roomId: string): Promise<RoomSnapshot> {
-  return request<RoomSnapshot>(`/api/rooms/${roomId}/cancel-issue`, {
+export async function skipIssue(roomId: string): Promise<RoomSnapshot> {
+  return request<RoomSnapshot>(`/api/rooms/${roomId}/skip-issue`, {
     method: "POST"
   });
 }

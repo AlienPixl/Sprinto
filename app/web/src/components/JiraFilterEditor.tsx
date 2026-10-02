@@ -390,6 +390,8 @@ type JiraFilterEditorProps = {
   labelsLoading?: boolean;
   labelsError?: string | null;
   onRequestLabels?: () => void;
+  /** Lets the root run empty out completely, meaning "import everything". */
+  allowEmptyRoot?: boolean;
 };
 
 export default function JiraFilterEditor({
@@ -403,6 +405,7 @@ export default function JiraFilterEditor({
   labelsLoading = false,
   labelsError,
   onRequestLabels,
+  allowEmptyRoot = false,
 }: JiraFilterEditorProps) {
   const [openPicker, setOpenPicker] = useState("");
   const treeRef = useRef<HTMLDivElement | null>(null);
@@ -555,8 +558,9 @@ export default function JiraFilterEditor({
   }
 
   function renderGroup(group: GroupLike, path: NodePath, depth: number) {
-    // The tree must keep at least one node at the root; inside a group anything may go.
-    const removable = path.length > 0 || group.conditions.length > 1;
+    // The tree must keep at least one node at the root unless the caller opted into an
+    // empty root meaning "import everything"; inside a group anything may go.
+    const removable = allowEmptyRoot || path.length > 0 || group.conditions.length > 1;
 
     return (
       <div className="jira-filter-conditions">
@@ -628,6 +632,11 @@ export default function JiraFilterEditor({
             </div>
           );
         })}
+        {path.length === 0 && group.conditions.length === 0 && (
+          <p className="jira-filter-empty">
+            No rules — every issue in the import scope will be imported.
+          </p>
+        )}
         <div className="jira-filter-actions">
           <button
             className="jira-filter-add"

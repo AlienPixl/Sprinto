@@ -4,7 +4,6 @@ import {
   capabilitiesFor,
   compareReleaseVersions,
   computeStats,
-  normalizeJiraFilterConditions,
   normalizeJiraImportFilters,
   resolveAuthProviderSettings,
   validatePassword,
@@ -242,76 +241,79 @@ describe("resolveAuthProviderSettings", () => {
   });
 });
 
-describe("normalizeJiraFilterConditions", () => {
+describe("normalizeJiraImportFilters", () => {
+  it("keeps an empty rule set empty so a request (or saved default) imports everything", () => {
+    expect(normalizeJiraImportFilters({})).toEqual({ conditions: [], connectors: [] });
+    expect(normalizeJiraImportFilters(undefined)).toEqual({ conditions: [], connectors: [] });
+  });
+
+  it("trims surplus connectors down to one fewer than the conditions", () => {
+    const filters = normalizeJiraImportFilters({
+      conditions: [
+        { field: "labels", operator: "IN", value: ["dor"] },
+        { field: "labels", operator: "IN", value: ["auto"] },
+      ],
+      connectors: ["OR", "AND", "OR"],
+    });
+    expect(filters.connectors).toEqual(["OR"]);
+  });
+
   it("preserves a labels condition with its string values", () => {
-    const conditions = normalizeJiraFilterConditions([
-      { field: "labels", operator: "IN", value: ["frontend", "urgent"] },
-    ]);
-    expect(conditions).toEqual([
+    const filters = normalizeJiraImportFilters({
+      conditions: [{ field: "labels", operator: "IN", value: ["frontend", "urgent"] }],
+    });
+    expect(filters.conditions).toEqual([
       { field: "labels", operator: "IN", value: ["frontend", "urgent"] },
     ]);
   });
 
   it("keeps a NOT IN labels condition and coerces values to strings", () => {
-    const conditions = normalizeJiraFilterConditions([
-      { field: "labels", operator: "NOT IN", value: ["skip", 42] },
-    ]);
-    expect(conditions).toEqual([
+    const filters = normalizeJiraImportFilters({
+      conditions: [{ field: "labels", operator: "NOT IN", value: ["skip", 42] }],
+    });
+    expect(filters.conditions).toEqual([
       { field: "labels", operator: "NOT IN", value: ["skip", "42"] },
     ]);
   });
 
-  it("preserves a status condition alongside a labels condition", () => {
-    const conditions = normalizeJiraFilterConditions([
-      { field: "status", operator: "IN", value: ["10001"] },
-      { field: "labels", operator: "IN", value: ["backend"] },
-    ]);
-    expect(conditions).toEqual([
-      { field: "status", operator: "IN", value: ["10001"] },
-      { field: "labels", operator: "IN", value: ["backend"] },
-    ]);
-  });
-
   it("normalizes a missing labels value to an empty array", () => {
-    const conditions = normalizeJiraFilterConditions([
-      { field: "labels", operator: "IN", value: null },
-    ]);
-    expect(conditions).toEqual([
-      { field: "labels", operator: "IN", value: [] },
-    ]);
+    const filters = normalizeJiraImportFilters({
+      conditions: [{ field: "labels", operator: "IN", value: null }],
+    });
+    expect(filters.conditions).toEqual([{ field: "labels", operator: "IN", value: [] }]);
   });
 
   it("drops conditions with an unknown field", () => {
-    const conditions = normalizeJiraFilterConditions([
-      { field: "bogus", operator: "IN", value: ["x"] },
-    ]);
-    expect(conditions).toEqual([
-      { field: "storyPoints", operator: "IS EMPTY", value: null },
-    ]);
+    const filters = normalizeJiraImportFilters({
+      conditions: [{ field: "bogus", operator: "IN", value: ["x"] }],
+    });
+    expect(filters.conditions).toEqual([]);
   });
 
   it("keeps a nested group and fills in its missing connectors", () => {
-    const conditions = normalizeJiraFilterConditions([
-      { field: "status", operator: "NOT IN", value: ["99"] },
-      {
-        type: "group",
-        conditions: [
-          { field: "labels", operator: "IN", value: ["dor"] },
-          { field: "labels", operator: "IN", value: ["auto"] },
-        ],
-        connectors: ["OR"],
-      },
-      {
-        type: "group",
-        conditions: [
-          { field: "storyPoints", operator: "IS EMPTY", value: null },
-          { field: "originalEstimate", operator: "IS EMPTY", value: null },
-        ],
-        connectors: [],
-      },
-    ]);
+    const filters = normalizeJiraImportFilters({
+      conditions: [
+        { field: "status", operator: "NOT IN", value: ["99"] },
+        {
+          type: "group",
+          conditions: [
+            { field: "labels", operator: "IN", value: ["dor"] },
+            { field: "labels", operator: "IN", value: ["auto"] },
+          ],
+          connectors: ["OR"],
+        },
+        {
+          type: "group",
+          conditions: [
+            { field: "storyPoints", operator: "IS EMPTY", value: null },
+            { field: "originalEstimate", operator: "IS EMPTY", value: null },
+          ],
+          connectors: [],
+        },
+      ],
+    });
 
-    expect(conditions).toEqual([
+    expect(filters.conditions).toEqual([
       { field: "status", operator: "NOT IN", value: ["99"] },
       {
         type: "group",
@@ -333,11 +335,13 @@ describe("normalizeJiraFilterConditions", () => {
   });
 
   it("drops a group left with no valid conditions", () => {
-    const conditions = normalizeJiraFilterConditions([
-      { field: "labels", operator: "IN", value: ["dor"] },
-      { type: "group", conditions: [{ field: "bogus", operator: "IN", value: ["x"] }], connectors: [] },
-    ]);
-    expect(conditions).toEqual([{ field: "labels", operator: "IN", value: ["dor"] }]);
+    const filters = normalizeJiraImportFilters({
+      conditions: [
+        { field: "labels", operator: "IN", value: ["dor"] },
+        { type: "group", conditions: [{ field: "bogus", operator: "IN", value: ["x"] }], connectors: [] },
+      ],
+    });
+    expect(filters.conditions).toEqual([{ field: "labels", operator: "IN", value: ["dor"] }]);
   });
 
   it("drops groups nested past the depth cap", () => {
@@ -345,25 +349,7 @@ describe("normalizeJiraFilterConditions", () => {
     for (let i = 0; i < 6; i++) {
       deepest = { type: "group", conditions: [deepest], connectors: [] };
     }
-    const conditions = normalizeJiraFilterConditions([deepest]);
-    expect(conditions).toEqual([{ field: "storyPoints", operator: "IS EMPTY", value: null }]);
-  });
-});
-
-describe("normalizeJiraImportFilters", () => {
-  it("keeps an empty rule set empty so a request imports everything", () => {
-    expect(normalizeJiraImportFilters({})).toEqual({ conditions: [], connectors: [] });
-    expect(normalizeJiraImportFilters(undefined)).toEqual({ conditions: [], connectors: [] });
-  });
-
-  it("trims surplus connectors down to one fewer than the conditions", () => {
-    const filters = normalizeJiraImportFilters({
-      conditions: [
-        { field: "labels", operator: "IN", value: ["dor"] },
-        { field: "labels", operator: "IN", value: ["auto"] },
-      ],
-      connectors: ["OR", "AND", "OR"],
-    });
-    expect(filters.connectors).toEqual(["OR"]);
+    const filters = normalizeJiraImportFilters({ conditions: [deepest] });
+    expect(filters.conditions).toEqual([]);
   });
 });

@@ -59,7 +59,7 @@ type TimelineInterval = {
   start: number;
 };
 
-type QueueFilterValue = "waiting" | "completed" | "all";
+type QueueStatusFilter = "waiting" | "skipped" | "completed";
 type QueueSortValue = "issue" | "reporter" | "priority";
 type QueueDisplayItem = {
   id: string;
@@ -68,9 +68,22 @@ type QueueDisplayItem = {
   externalIssueUrl: string;
   externalIssueKey: string;
   jiraFieldsSnapshot: Record<string, unknown>;
-  listState: "waiting" | "completed";
+  listState: "waiting" | "skipped" | "completed";
   waitingIssueId?: string;
+  groupDividerBefore?: boolean;
 };
+
+const QUEUE_STATUS_FILTER_OPTIONS: Array<{ value: QueueStatusFilter; label: string }> = [
+  { value: "waiting", label: "Waiting" },
+  { value: "skipped", label: "Skipped" },
+  { value: "completed", label: "Completed" },
+];
+
+const QUEUE_SORT_OPTIONS: Array<{ value: QueueSortValue; label: string }> = [
+  { value: "issue", label: "Issue key" },
+  { value: "reporter", label: "Reporter" },
+  { value: "priority", label: "Priority" },
+];
 
 type RoomViewProps = {
   snapshot: RoomSnapshot;
@@ -78,7 +91,7 @@ type RoomViewProps = {
   canVote: boolean;
   onVote: (userId: string, value: string) => Promise<void>;
   onReveal: () => Promise<void>;
-  onCancelIssue: () => Promise<void>;
+  onSkipIssue: () => Promise<void>;
   onClose: () => Promise<void>;
   onDeleteRoom: () => Promise<void>;
   onQueueIssue: (title: string, storyId?: string) => Promise<void>;
@@ -153,7 +166,7 @@ export function RoomView({
   canVote,
   onVote,
   onReveal,
-  onCancelIssue,
+  onSkipIssue,
   onClose,
   onDeleteRoom,
   onQueueIssue,
@@ -201,7 +214,7 @@ export function RoomView({
   const [queueDeleteTarget, setQueueDeleteTarget] = useState<IssueQueueItem | null>(null);
   const [queueDeleteBusy, setQueueDeleteBusy] = useState(false);
   const [closePokerConfirmOpen, setClosePokerConfirmOpen] = useState(false);
-  const [cancelIssueConfirmOpen, setCancelIssueConfirmOpen] = useState(false);
+  const [skipIssueConfirmOpen, setSkipIssueConfirmOpen] = useState(false);
   const [roomDeleteOpen, setRoomDeleteOpen] = useState(false);
   const [roomDeleteBusy, setRoomDeleteBusy] = useState(false);
   const [roomRenameOpen, setRoomRenameOpen] = useState(false);
@@ -234,7 +247,8 @@ export function RoomView({
   const [jiraSearchLoading, setJiraSearchLoading] = useState(false);
   const [jiraSearchError, setJiraSearchError] = useState<string | null>(null);
   const [jiraSearchPerformed, setJiraSearchPerformed] = useState(false);
-  const [jiraSearchSelection, setJiraSearchSelection] = useState<string[]>([]);
+  const [jiraSelectedIssues, setJiraSelectedIssues] = useState<Record<string, JiraImportPreviewIssue>>({});
+  const [jiraSearchShowOnlySelected, setJiraSearchShowOnlySelected] = useState(false);
   const [jiraSearchImporting, setJiraSearchImporting] = useState(false);
   const lastJiraSearchQueryRef = useRef("");
   const [jiraBoards, setJiraBoards] = useState<JiraBoard[]>([]);
@@ -269,7 +283,13 @@ export function RoomView({
   );
   const [queuePage, setQueuePage] = useState(0);
   const [historyPage, setHistoryPage] = useState(0);
-  const [queueFilter, setQueueFilter] = useState<QueueFilterValue>("waiting");
+  const [queueStatusFilter, setQueueStatusFilter] = useState<Set<QueueStatusFilter>>(
+    () => new Set<QueueStatusFilter>(["waiting", "skipped"])
+  );
+  const [queueStatusFilterOpen, setQueueStatusFilterOpen] = useState(false);
+  const queueStatusFilterRef = useRef<HTMLDivElement | null>(null);
+  const [queueSortOpen, setQueueSortOpen] = useState(false);
+  const queueSortRef = useRef<HTMLDivElement | null>(null);
   const queueSort: QueueSortValue = (snapshot.room.queueSort as QueueSortValue) || "issue";
   const [jiraActionOpen, setJiraActionOpen] = useState(false);
   const [jiraActionBusy, setJiraActionBusy] = useState(false);
@@ -296,6 +316,7 @@ export function RoomView({
   const [jiraActionOriginalEstimateEdited, setJiraActionOriginalEstimateEdited] = useState(false);
   const [jiraActionError, setJiraActionError] = useState("");
   const [jiraActionResendConfirm, setJiraActionResendConfirm] = useState(false);
+  const [jiraActionFailureOverlay, setJiraActionFailureOverlay] = useState<{ message: string; key: number } | null>(null);
   const [pendingRevealJiraIssueId, setPendingRevealJiraIssueId] = useState<string | null>(null);
   const [animatedParticipants, setAnimatedParticipants] = useState<AnimatedParticipant[]>([]);
   const [, setNow] = useState(() => Date.now());
@@ -304,8 +325,6 @@ export function RoomView({
   const draggingTimelineRef = useRef(false);
   const roomSettingsRef = useRef<HTMLDivElement | null>(null);
   const roomSettingsButtonRef = useRef<HTMLButtonElement | null>(null);
-  const prevIssueIdRef = useRef<string>(snapshot.room.currentIssue.id);
-  const locallyStartedIssueIdRef = useRef<string | null>(null);
   const jiraAssigneePickerRef = useRef<HTMLDivElement | null>(null);
   const jiraAssigneeSearchInputRef = useRef<HTMLInputElement | null>(null);
   const jiraAssigneeOptionsCacheRef = useRef<Record<string, JiraAssignableUser[]>>({});
@@ -437,19 +456,7 @@ export function RoomView({
     setSelectedIssueId(null);
     setHistoryPlayback(100);
     setQueuePage(0);
-    const issue = snapshot.room.currentIssue;
-    if (
-      issue.id !== prevIssueIdRef.current &&
-      autoOpenJiraUrl &&
-      issue.externalSource === "jira" &&
-      issue.externalIssueUrl &&
-      locallyStartedIssueIdRef.current === issue.id
-    ) {
-      window.open(issue.externalIssueUrl, "_blank", "noopener,noreferrer");
-    }
-    locallyStartedIssueIdRef.current = null;
-    prevIssueIdRef.current = issue.id;
-  }, [snapshot.room.currentIssue.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [snapshot.room.currentIssue.id]);
 
   useEffect(() => {
     setHistoryPlayback(100);
@@ -466,6 +473,18 @@ export function RoomView({
 
     return () => window.clearTimeout(timeoutId);
   }, [jiraMessage]);
+
+  useEffect(() => {
+    if (!jiraActionFailureOverlay) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setJiraActionFailureOverlay(null);
+    }, 5000);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [jiraActionFailureOverlay]);
 
   const issuesForHistory = useMemo(() => historyIssues(snapshot), [snapshot]);
   const selectedHistoryIssue = useMemo(
@@ -495,7 +514,7 @@ export function RoomView({
       jiraPreviewOpen ||
       shareOpen ||
       closePokerConfirmOpen ||
-      cancelIssueConfirmOpen ||
+      skipIssueConfirmOpen ||
       Boolean(queueDeleteTarget) ||
       roomDeleteOpen;
 
@@ -509,7 +528,7 @@ export function RoomView({
     return () => {
       document.body.style.overflow = previousOverflow;
     };
-  }, [jiraReimportOpen, jiraPreviewOpen, shareOpen, closePokerConfirmOpen, cancelIssueConfirmOpen, queueDeleteTarget, roomDeleteOpen, roomRenameOpen]);
+  }, [jiraReimportOpen, jiraPreviewOpen, shareOpen, closePokerConfirmOpen, skipIssueConfirmOpen, queueDeleteTarget, roomDeleteOpen, roomRenameOpen]);
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -532,7 +551,7 @@ export function RoomView({
         setJiraActionOpen(false);
         setRoomSettingsOpen(false);
         setClosePokerConfirmOpen(false);
-        setCancelIssueConfirmOpen(false);
+        setSkipIssueConfirmOpen(false);
         if (!queueDeleteBusy) {
           setQueueDeleteTarget(null);
         }
@@ -561,11 +580,17 @@ export function RoomView({
       if (jiraActionAssigneeOpen && jiraAssigneePickerRef.current && !jiraAssigneePickerRef.current.contains(event.target as Node)) {
         setJiraActionAssigneeOpen(false);
       }
+      if (queueStatusFilterOpen && queueStatusFilterRef.current && !queueStatusFilterRef.current.contains(event.target as Node)) {
+        setQueueStatusFilterOpen(false);
+      }
+      if (queueSortOpen && queueSortRef.current && !queueSortRef.current.contains(event.target as Node)) {
+        setQueueSortOpen(false);
+      }
     }
 
     window.addEventListener("pointerdown", handlePointerDown);
     return () => window.removeEventListener("pointerdown", handlePointerDown);
-  }, [jiraActionAssigneeOpen]);
+  }, [jiraActionAssigneeOpen, queueStatusFilterOpen, queueSortOpen]);
 
   const displayIssue: Issue = selectedHistoryIssue ?? snapshot.room.currentIssue;
   const displayVotes = historyFrame?.visibleVotes ?? displayIssue.votes;
@@ -576,9 +601,10 @@ export function RoomView({
   const hasNumericVoteStats = useMemo(() => hasAnyNumericVotes(Object.values(displayVotes)), [displayVotes]);
   const roundSummary = formatRoundSummary(displayRevealed, displayStats, Object.keys(displayVotes).length, hasNumericVoteStats);
   const issueQueue = snapshot.room.issueQueue ?? [];
+  const waitingQueueItems = useMemo(() => issueQueue.filter((issue) => issue.status !== "skipped"), [issueQueue]);
   const queueDisplayItems = useMemo(
-    () => buildQueueDisplayItems(snapshot, queueFilter, queueSort),
-    [queueFilter, queueSort, snapshot]
+    () => buildQueueDisplayItems(snapshot, queueStatusFilter, queueSort),
+    [queueStatusFilter, queueSort, snapshot]
   );
   const queuePageCount = Math.max(1, Math.ceil(queueDisplayItems.length / queuePageSize));
   const pagedQueue = queueDisplayItems.slice(queuePage * queuePageSize, (queuePage + 1) * queuePageSize);
@@ -588,7 +614,7 @@ export function RoomView({
   const historyPlaceholderCount = Math.max(0, historyPageSize - pagedHistory.length);
   const selectedVote = snapshot.room.currentIssue.votes[currentUserId]?.value ?? null;
   const canReveal = snapshot.room.status === "voting" && !snapshot.room.revealed;
-  const canStartNextIssue = snapshot.room.status !== "voting" && issueQueue.length > 0;
+  const canStartNextIssue = snapshot.room.status !== "voting" && waitingQueueItems.length > 0;
   const canStartQueuedIssue = snapshot.room.status !== "voting" && issueQueue.length > 0;
   const statusLabel = formatStatusLabel(snapshot.room.status);
   const roomUrl = `${window.location.origin}/rooms/${encodeURIComponent(snapshot.room.id)}`;
@@ -628,6 +654,12 @@ export function RoomView({
     isCurrentIssueFromJira &&
     snapshot.room.status === "revealed" &&
     !jiraActionBusy;
+  const showImportFromJiraButton = canImportJiraIssues && snapshot.room.status !== "closed";
+  const showSendToJiraButton = canShowJiraActionButton;
+  const showJiraActionsSection = showImportFromJiraButton || showSendToJiraButton;
+  const showRoomSettingsButton = canManageCardHighlight;
+  const showCloseRoomButton = snapshot.room.status !== "closed";
+  const showFinalControlsSection = showRoomSettingsButton || showCloseRoomButton;
   const displayedParticipants =
     animatedParticipants.length > 0
       ? animatedParticipants
@@ -641,6 +673,23 @@ export function RoomView({
   const jiraExistingEstimateDelivery = jiraActionIssue.jiraDeliveryStatus?.estimate;
   const jiraExistingReportDelivery = jiraActionIssue.jiraDeliveryStatus?.report;
   const jiraExistingAssigneeDelivery = jiraActionIssue.jiraDeliveryStatus?.assignee;
+  const jiraDeliveryFailures = useMemo(() => {
+    if (!canSendToJira) {
+      return [];
+    }
+    const status = displayIssue.jiraDeliveryStatus;
+    const entries: Array<{ label: string; message: string; at: string | null }> = [];
+    if (status?.estimate?.lastErrorMessage) {
+      entries.push({ label: "Estimate", message: status.estimate.lastErrorMessage, at: status.estimate.lastErrorAt });
+    }
+    if (status?.assignee?.lastErrorMessage) {
+      entries.push({ label: "Assignee", message: status.assignee.lastErrorMessage, at: status.assignee.lastErrorAt });
+    }
+    if (status?.report?.lastErrorMessage) {
+      entries.push({ label: "Report", message: status.report.lastErrorMessage, at: status.report.lastErrorAt });
+    }
+    return entries;
+  }, [canSendToJira, displayIssue.jiraDeliveryStatus]);
   const jiraActionSelectedAssignee = useMemo(
     () => jiraActionAssigneeOptions.find((user) => user.accountId === jiraActionAssigneeAccountId) ?? null,
     [jiraActionAssigneeAccountId, jiraActionAssigneeOptions]
@@ -714,6 +763,7 @@ export function RoomView({
     setJiraActionOriginalEstimateEdited(false);
     setJiraActionError("");
     setJiraActionResendConfirm(false);
+    setJiraActionFailureOverlay(null);
   }
 
   function closeQueueOverlayPanels() {
@@ -749,6 +799,7 @@ export function RoomView({
     setJiraActionAssigneeOpen(false);
     setJiraActionError("");
     setJiraActionResendConfirm(false);
+    setJiraActionFailureOverlay(null);
   }
 
   function openHistoryPanel() {
@@ -796,19 +847,22 @@ export function RoomView({
 
   useEffect(() => {
     setQueuePage(0);
-  }, [queueFilter, queueSort]);
+  }, [queueStatusFilter, queueSort]);
 
   useEffect(() => {
     setHistoryPage(0);
   }, [historyOpen]);
 
   useEffect(() => {
+    if (jiraActionBusy) {
+      return;
+    }
     if (!canOpenJiraAction && jiraActionOpen) {
       setJiraActionOpen(false);
       setJiraActionAssigneeOpen(false);
       setJiraActionResendConfirm(false);
     }
-  }, [canOpenJiraAction, jiraActionOpen]);
+  }, [canOpenJiraAction, jiraActionOpen, jiraActionBusy]);
 
   useEffect(() => {
     if (!pendingRevealJiraIssueId) {
@@ -906,7 +960,7 @@ export function RoomView({
   useEffect(() => {
     updateQueueCapacity();
     updateHistoryCapacity();
-  }, [isQueueOverlayOpen, queueDisplayItems.length, issuesForHistory.length, queueFilter, queueSort, updateQueueCapacity, updateHistoryCapacity]);
+  }, [isQueueOverlayOpen, queueDisplayItems.length, issuesForHistory.length, queueStatusFilter, queueSort, updateQueueCapacity, updateHistoryCapacity]);
 
   useEffect(() => {
     const handleResize = () => {
@@ -1052,9 +1106,11 @@ export function RoomView({
     }
   }
 
-  async function handleStartQueuedIssue(issueId: string) {
-    locallyStartedIssueIdRef.current = issueId;
-    await onStartQueuedIssue(issueId);
+  async function handleStartQueuedIssue(queueItem: IssueQueueItem) {
+    if (autoOpenJiraUrl && queueItem.externalSource === "jira" && queueItem.externalIssueUrl) {
+      openExternalUrl(queueItem.externalIssueUrl);
+    }
+    await onStartQueuedIssue(queueItem.id);
   }
 
   function startEditingQueueIssue(issue: IssueQueueItem) {
@@ -1232,14 +1288,17 @@ export function RoomView({
   function resetJiraSearch() {
     setJiraSearchQuery("");
     setJiraSearchIssues([]);
-    setJiraSearchSelection([]);
+    setJiraSelectedIssues({});
+    setJiraSearchShowOnlySelected(false);
     setJiraSearchPerformed(false);
     setJiraSearchError(null);
     lastJiraSearchQueryRef.current = "";
   }
 
   // Searching costs a Jira request, so it never runs while typing — only on Enter or the button,
-  // and repeating the same query without editing it is a no-op.
+  // and repeating the same query without editing it is a no-op. The selection survives a new
+  // search (it's keyed by issue key, not tied to the current result list), but the "only selected"
+  // view drops back to normal results since the user is clearly looking for something else.
   async function runJiraSearch() {
     const query = jiraSearchQuery.trim();
     if (!query || jiraSearchLoading) {
@@ -1249,16 +1308,15 @@ export function RoomView({
       return;
     }
     lastJiraSearchQueryRef.current = query;
+    setJiraSearchShowOnlySelected(false);
     setJiraSearchLoading(true);
     setJiraSearchError(null);
     try {
       const issues = await onSearchJiraIssues(query);
       setJiraSearchIssues(issues);
-      setJiraSearchSelection([]);
       setJiraSearchPerformed(true);
     } catch (error) {
       setJiraSearchIssues([]);
-      setJiraSearchSelection([]);
       setJiraSearchPerformed(false);
       lastJiraSearchQueryRef.current = "";
       setJiraSearchError(error instanceof Error ? error.message : "Failed to search Jira issues.");
@@ -1267,20 +1325,29 @@ export function RoomView({
     }
   }
 
-  function toggleJiraSearchSelection(issueKey: string) {
-    setJiraSearchSelection((selection) =>
-      selection.includes(issueKey) ? selection.filter((key) => key !== issueKey) : [...selection, issueKey]
-    );
+  function toggleJiraSearchSelection(issue: JiraImportPreviewIssue) {
+    setJiraSelectedIssues((selected) => {
+      if (selected[issue.key]) {
+        const { [issue.key]: _removed, ...rest } = selected;
+        return rest;
+      }
+      return { ...selected, [issue.key]: issue };
+    });
+  }
+
+  function toggleJiraSearchShowOnlySelected() {
+    setJiraSearchShowOnlySelected((value) => !value);
   }
 
   async function handleImportSearchedJiraIssues() {
-    if (jiraSearchSelection.length === 0 || jiraSearchImporting) {
+    const selectedKeys = Object.keys(jiraSelectedIssues);
+    if (selectedKeys.length === 0 || jiraSearchImporting) {
       return;
     }
     setJiraSearchImporting(true);
     setJiraSearchError(null);
     try {
-      const result = await onImportSearchedJiraIssues(jiraSearchSelection);
+      const result = await onImportSearchedJiraIssues(selectedKeys);
       resetJiraSearch();
       // The outcome goes to the queue notice bar, so closing the panel still reports what happened.
       setJiraMessage(formatJiraSearchImportSummary(result));
@@ -1463,9 +1530,9 @@ export function RoomView({
     await onClose();
   }
 
-  async function confirmCancelIssue() {
-    setCancelIssueConfirmOpen(false);
-    await onCancelIssue();
+  async function confirmSkipIssue() {
+    setSkipIssueConfirmOpen(false);
+    await onSkipIssue();
   }
 
   function openJiraAssigneePicker() {
@@ -1562,7 +1629,8 @@ export function RoomView({
       setJiraActionOpen(false);
       setJiraActionResendConfirm(false);
     } catch (error) {
-      setJiraActionError(error instanceof Error ? error.message : "Failed to send Jira data.");
+      const message = error instanceof Error ? error.message : "Failed to send Jira data.";
+      setJiraActionFailureOverlay({ message, key: Date.now() });
     } finally {
       setJiraActionBusy(false);
     }
@@ -1606,6 +1674,16 @@ export function RoomView({
               <div className="issue-banner__content">
                 <span className="issue-banner__label">{isHistoryPreview ? "History issue" : "Current issue"}</span>
                 <strong title={displayIssue.title}>{snapshot.room.status === "closed" && !isHistoryPreview ? "—" : displayIssue.title}</strong>
+                {jiraDeliveryFailures.length > 0 ? (
+                  <span
+                    className="issue-banner__jira-warning"
+                    title={jiraDeliveryFailures
+                      .map((failure) => `${failure.label}: ${failure.message}${failure.at ? ` (${formatJiraSentAt(failure.at)})` : ""}`)
+                      .join("\n")}
+                  >
+                    Jira sync failed
+                  </span>
+                ) : null}
               </div>
               {(snapshot.room.status !== "closed" || isHistoryPreview) && displayIssue.externalSource === "jira" && displayIssue.externalIssueUrl ? (
                 <button
@@ -1673,6 +1751,16 @@ export function RoomView({
                     >
                       <LinkIcon />
                     </button>
+                  ) : null}
+                  {jiraDeliveryFailures.length > 0 ? (
+                    <span
+                      className="issue-banner__jira-warning"
+                      title={jiraDeliveryFailures
+                        .map((failure) => `${failure.label}: ${failure.message}${failure.at ? ` (${formatJiraSentAt(failure.at)})` : ""}`)
+                        .join("\n")}
+                    >
+                      Jira sync failed
+                    </span>
                   ) : null}
                 </div>
               </div>
@@ -1778,39 +1866,56 @@ export function RoomView({
                 <div className="controls-inline controls-inline--stacked">
                   {canManageRound ? (
                     <>
+                      <button
+                        disabled={!canStartNextIssue}
+                        onClick={() => {
+                          const nextQueueItem = waitingQueueItems[0];
+                          if (nextQueueItem) void handleStartQueuedIssue(nextQueueItem);
+                        }}
+                        type="button"
+                      >
+                        Next issue
+                      </button>
                       <button disabled={!canReveal} onClick={() => void handleRevealAndOpenJira()} type="button">
                         Reveal cards
                       </button>
-                      <button className="ghost-button ghost-button--strong" disabled={snapshot.room.status !== "voting"} onClick={() => setCancelIssueConfirmOpen(true)} type="button">
-                        Return to queue
+                      <button className="ghost-button ghost-button--strong" disabled={snapshot.room.status !== "voting"} onClick={() => setSkipIssueConfirmOpen(true)} type="button">
+                        Skip issue
                       </button>
-                      <button disabled={!canStartNextIssue} onClick={() => void handleStartQueuedIssue(issueQueue[0]?.id ?? "")} type="button">
-                        Next issue
-                      </button>
-                      {canManageCardHighlight ? (
-                        <button className="ghost-button ghost-button--strong" onClick={openRoomSettingsPanel} ref={roomSettingsButtonRef} type="button">
-                          Room settings
-                        </button>
-                      ) : null}
-                      {canImportJiraIssues && snapshot.room.status !== "closed" ? (
-                        <button className="ghost-button ghost-button--strong" onClick={() => void openJiraModal()} type="button">
-                          Import from Jira
-                        </button>
-                      ) : null}
-                      {canShowJiraActionButton ? (
-                        <button className="ghost-button ghost-button--strong" disabled={!canOpenJiraAction} onClick={openJiraActionModal} type="button">
-                          Send to Jira
-                        </button>
-                      ) : null}
-                      {snapshot.room.status !== "closed" ? (
-                        <button disabled={snapshot.room.status !== "revealed"} onClick={() => setClosePokerConfirmOpen(true)} type="button">
-                          Close poker
-                        </button>
-                      ) : null}
                       {canViewHistory ? (
                         <button className="ghost-button ghost-button--strong" onClick={openHistoryPanel} type="button">
                           History
                         </button>
+                      ) : null}
+                      {showJiraActionsSection ? (
+                        <>
+                          <div className="controls-inline__divider" />
+                          {showImportFromJiraButton ? (
+                            <button className="ghost-button ghost-button--strong" onClick={() => void openJiraModal()} type="button">
+                              Import from Jira
+                            </button>
+                          ) : null}
+                          {showSendToJiraButton ? (
+                            <button className="ghost-button ghost-button--strong" disabled={!canOpenJiraAction} onClick={openJiraActionModal} type="button">
+                              Send to Jira
+                            </button>
+                          ) : null}
+                        </>
+                      ) : null}
+                      {showFinalControlsSection ? (
+                        <>
+                          <div className="controls-inline__divider" />
+                          {showRoomSettingsButton ? (
+                            <button className="ghost-button ghost-button--strong" onClick={openRoomSettingsPanel} ref={roomSettingsButtonRef} type="button">
+                              Room settings
+                            </button>
+                          ) : null}
+                          {showCloseRoomButton ? (
+                            <button disabled={snapshot.room.status !== "revealed"} onClick={() => setClosePokerConfirmOpen(true)} type="button">
+                              Close room
+                            </button>
+                          ) : null}
+                        </>
                       ) : null}
                     </>
                   ) : null}
@@ -1843,26 +1948,85 @@ export function RoomView({
                           </button>
                         ) : null}
                         <div className="queue-toolbar" aria-label="Queue filters and sorting">
-                          <label className="queue-toolbar__control">
-                            <span aria-hidden="true" className="queue-toolbar__icon">
-                              <FilterIcon />
-                            </span>
-                            <select aria-label="Filter queue issues" value={queueFilter} onChange={(event) => setQueueFilter(event.target.value as QueueFilterValue)}>
-                              <option value="waiting">Waiting</option>
-                              <option value="completed">Completed</option>
-                              <option value="all">All</option>
-                            </select>
-                          </label>
-                          <label className="queue-toolbar__control">
-                            <span aria-hidden="true" className="queue-toolbar__icon">
-                              <SortIcon />
-                            </span>
-                            <select aria-label="Sort queue issues" value={queueSort} onChange={(event) => void onUpdateQueueSort(event.target.value as QueueSortValue)}>
-                              <option value="issue">Issue key</option>
-                              <option value="reporter">Reporter</option>
-                              <option value="priority">Priority</option>
-                            </select>
-                          </label>
+                          <div className="filter-dropdown" ref={queueStatusFilterRef}>
+                            <button
+                              aria-expanded={queueStatusFilterOpen}
+                              aria-haspopup="true"
+                              aria-label="Filter queue issues"
+                              className={`filter-chip ${queueStatusFilterOpen ? "is-active" : ""}`}
+                              onClick={() => {
+                                setQueueStatusFilterOpen((current) => !current);
+                                setQueueSortOpen(false);
+                              }}
+                              type="button"
+                            >
+                              <span aria-hidden="true" className="queue-toolbar__chip-icon">
+                                <FilterIcon />
+                              </span>
+                              Status {queueStatusFilterOpen ? "▾" : "▸"}
+                            </button>
+                            {queueStatusFilterOpen ? (
+                              <div className="filter-dropdown__panel">
+                                {QUEUE_STATUS_FILTER_OPTIONS.map((option) => (
+                                  <button
+                                    aria-pressed={queueStatusFilter.has(option.value)}
+                                    className={`filter-chip ${queueStatusFilter.has(option.value) ? "is-active" : ""}`}
+                                    key={option.value}
+                                    onClick={() => {
+                                      setQueueStatusFilter((current) => {
+                                        const next = new Set(current);
+                                        if (next.has(option.value)) {
+                                          next.delete(option.value);
+                                        } else {
+                                          next.add(option.value);
+                                        }
+                                        return next;
+                                      });
+                                    }}
+                                    type="button"
+                                  >
+                                    {option.label}
+                                  </button>
+                                ))}
+                              </div>
+                            ) : null}
+                          </div>
+                          <div className="filter-dropdown" ref={queueSortRef}>
+                            <button
+                              aria-expanded={queueSortOpen}
+                              aria-haspopup="true"
+                              aria-label="Sort queue issues"
+                              className={`filter-chip ${queueSortOpen ? "is-active" : ""}`}
+                              onClick={() => {
+                                setQueueSortOpen((current) => !current);
+                                setQueueStatusFilterOpen(false);
+                              }}
+                              type="button"
+                            >
+                              <span aria-hidden="true" className="queue-toolbar__chip-icon">
+                                <SortIcon />
+                              </span>
+                              {QUEUE_SORT_OPTIONS.find((option) => option.value === queueSort)?.label ?? "Issue key"} {queueSortOpen ? "▾" : "▸"}
+                            </button>
+                            {queueSortOpen ? (
+                              <div className="filter-dropdown__panel filter-dropdown__panel--right">
+                                {QUEUE_SORT_OPTIONS.map((option) => (
+                                  <button
+                                    aria-pressed={queueSort === option.value}
+                                    className={`filter-chip ${queueSort === option.value ? "is-active" : ""}`}
+                                    key={option.value}
+                                    onClick={() => {
+                                      setQueueSortOpen(false);
+                                      void onUpdateQueueSort(option.value);
+                                    }}
+                                    type="button"
+                                  >
+                                    {option.label}
+                                  </button>
+                                ))}
+                              </div>
+                            ) : null}
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -2189,6 +2353,18 @@ export function RoomView({
                         {jiraActionBusy ? "Sending..." : jiraActionResendConfirm ? "Send again" : "Send to Jira"}
                       </button>
                     </div>
+
+                    {jiraActionFailureOverlay ? (
+                      <div className="jira-send-failure-overlay" key={jiraActionFailureOverlay.key}>
+                        <div className="jira-send-failure-overlay__message">
+                          <strong>Couldn't send to Jira</strong>
+                          <p>{jiraActionFailureOverlay.message}</p>
+                        </div>
+                        <div className="jira-send-failure-overlay__bar">
+                          <div className="jira-send-failure-overlay__bar-fill" />
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
                 ) : jiraOpen ? (
                   <div className="queue-jira-panel">
@@ -2262,6 +2438,7 @@ export function RoomView({
                           labelsLoading={jiraLabelsLoading}
                           labelsError={jiraLabelsError}
                           onRequestLabels={() => void loadJiraLabels()}
+                          allowEmptyRoot
                         />
                       </div>
 
@@ -2389,53 +2566,76 @@ export function RoomView({
                       {jiraSearchError ? (
                         <p className="jira-search-panel__error">{jiraSearchError}</p>
                       ) : null}
-                      {!jiraSearchError && jiraSearchPerformed && jiraSearchIssues.length === 0 ? (
+                      {!jiraSearchError && !jiraSearchShowOnlySelected && jiraSearchPerformed && jiraSearchIssues.length === 0 ? (
                         <p className="settings-help settings-help--modal-spaced">No matching Jira issues were found.</p>
                       ) : null}
 
-                      {jiraSearchIssues.length > 0 ? (
-                        <div className="jira-search-panel__results">
-                          {jiraSearchIssues.map((issue) => {
-                            const alreadyInRoom = roomJiraExternalIds.has(String(issue.id));
-                            return (
-                              <label
-                                className={`jira-search-result${alreadyInRoom ? " jira-search-result--disabled" : ""}`}
-                                key={issue.id}
-                              >
-                                <input
-                                  aria-label={`Select ${issue.key}`}
-                                  checked={jiraSearchSelection.includes(issue.key)}
-                                  disabled={alreadyInRoom || jiraSearchImporting}
-                                  onChange={() => toggleJiraSearchSelection(issue.key)}
-                                  type="checkbox"
-                                />
-                                <span className="jira-search-result__body">
-                                  <strong>{issue.key}</strong>
-                                  <span className="jira-search-result__title">{issue.title}</span>
-                                  <span className="jira-search-result__meta">
-                                    {[issue.issueType, issue.status, issue.priority?.name].filter(Boolean).join(" · ") || "—"}
-                                  </span>
-                                </span>
-                                {alreadyInRoom ? <span className="pill jira-search-result__tag">In queue</span> : null}
-                              </label>
-                            );
-                          })}
-                        </div>
-                      ) : null}
+                      {(() => {
+                        const selectedCount = Object.keys(jiraSelectedIssues).length;
+                        const displayIssues = jiraSearchShowOnlySelected
+                          ? Object.values(jiraSelectedIssues)
+                          : jiraSearchIssues;
+                        return (
+                          <>
+                            {selectedCount > 0 ? (
+                              <div className="jira-search-panel__selection">
+                                <button
+                                  aria-pressed={jiraSearchShowOnlySelected}
+                                  className={`jira-search-panel__selection-toggle${jiraSearchShowOnlySelected ? " is-active" : ""}`}
+                                  onClick={toggleJiraSearchShowOnlySelected}
+                                  type="button"
+                                >
+                                  {selectedCount} selected
+                                </button>
+                              </div>
+                            ) : null}
 
-                      <div className="queue-jira-panel__actions">
-                        <button className="button-center" disabled={jiraSearchImporting} onClick={closeJiraSearchPanel} type="button">
-                          Close
-                        </button>
-                        <button
-                          className="button-center"
-                          disabled={jiraSearchImporting || jiraSearchSelection.length === 0}
-                          onClick={() => void handleImportSearchedJiraIssues()}
-                          type="button"
-                        >
-                          {jiraSearchImporting ? "Adding…" : `Add ${jiraSearchSelection.length} to queue`}
-                        </button>
-                      </div>
+                            {displayIssues.length > 0 ? (
+                              <div className="jira-search-panel__results">
+                                {displayIssues.map((issue) => {
+                                  const alreadyInRoom = roomJiraExternalIds.has(String(issue.id));
+                                  return (
+                                    <label
+                                      className={`jira-search-result${alreadyInRoom ? " jira-search-result--disabled" : ""}`}
+                                      key={issue.id}
+                                    >
+                                      <input
+                                        aria-label={`Select ${issue.key}`}
+                                        checked={Boolean(jiraSelectedIssues[issue.key])}
+                                        disabled={alreadyInRoom || jiraSearchImporting}
+                                        onChange={() => toggleJiraSearchSelection(issue)}
+                                        type="checkbox"
+                                      />
+                                      <span className="jira-search-result__body">
+                                        <strong>{issue.key}</strong>
+                                        <span className="jira-search-result__title">{issue.title}</span>
+                                        <span className="jira-search-result__meta">
+                                          {[issue.issueType, issue.status, issue.priority?.name].filter(Boolean).join(" · ") || "—"}
+                                        </span>
+                                      </span>
+                                      {alreadyInRoom ? <span className="pill jira-search-result__tag">In queue</span> : null}
+                                    </label>
+                                  );
+                                })}
+                              </div>
+                            ) : null}
+
+                            <div className="queue-jira-panel__actions">
+                              <button className="button-center" disabled={jiraSearchImporting} onClick={closeJiraSearchPanel} type="button">
+                                Close
+                              </button>
+                              <button
+                                className="button-center"
+                                disabled={jiraSearchImporting || selectedCount === 0}
+                                onClick={() => void handleImportSearchedJiraIssues()}
+                                type="button"
+                              >
+                                {jiraSearchImporting ? "Adding…" : `Add ${selectedCount} to queue`}
+                              </button>
+                            </div>
+                          </>
+                        );
+                      })()}
                     </div>
                   </div>
                 ) : roomSettingsOpen ? (
@@ -2542,21 +2742,21 @@ export function RoomView({
                     <div className="queue-list" ref={attachQueueList}>
                       {pagedQueue.length === 0 ? (
                         <p className="queue-list__empty">
-                          {queueFilter === "completed"
+                          {queueStatusFilter.size === 1 && queueStatusFilter.has("completed")
                             ? "No completed issues match the current view."
-                            : queueFilter === "all"
-                              ? "No issues match the current view."
-                              : "No issues are currently waiting in the queue."}
+                            : "No issues match the current view."}
                         </p>
                       ) : null}
                       {pagedQueue.map((issue) => {
-                        const isWaitingIssue = issue.listState === "waiting" && Boolean(issue.waitingIssueId);
+                        const isActionableQueueIssue =
+                          (issue.listState === "waiting" || issue.listState === "skipped") && Boolean(issue.waitingIssueId);
                         const waitingIssueId = issue.waitingIssueId || issue.id;
-                        const isEditing = isWaitingIssue && editingQueueIssueId === waitingIssueId;
+                        const isEditing = isActionableQueueIssue && editingQueueIssueId === waitingIssueId;
+                        const dividerClassName = issue.groupDividerBefore ? "queue-item--group-divider" : "";
 
                         if (isEditing) {
                           return (
-                            <div className="queue-item queue-item--editing" key={issue.id}>
+                            <div className={`queue-item queue-item--editing ${dividerClassName}`.trim()} key={issue.id}>
                               <div className="queue-item__edit-fields">
                                 <input
                                   aria-label="Edit story ID"
@@ -2600,12 +2800,18 @@ export function RoomView({
                         }
 
                         return (
-                          <div className={`queue-item ${isWaitingIssue && !canStartQueuedIssue ? "queue-item--locked" : ""}`} key={issue.id}>
-                            {isWaitingIssue ? (
+                          <div
+                            className={`queue-item ${isActionableQueueIssue && !canStartQueuedIssue ? "queue-item--locked" : ""} ${dividerClassName}`.trim()}
+                            key={issue.id}
+                          >
+                            {isActionableQueueIssue ? (
                               <button
                                 className={`queue-item__select ${!canStartQueuedIssue ? "is-disabled" : ""}`}
                                 disabled={!canStartQueuedIssue}
-                                onClick={() => void handleStartQueuedIssue(waitingIssueId)}
+                                onClick={() => {
+                                  const queueItem = issueQueue.find((entry) => entry.id === waitingIssueId);
+                                  if (queueItem) void handleStartQueuedIssue(queueItem);
+                                }}
                                 type="button"
                               >
                                 <div className="queue-item__line" title={formatQueuePrimaryLine(issue)}>
@@ -2639,7 +2845,7 @@ export function RoomView({
                               ) : (
                                 <span aria-hidden="true" className="queue-item__icon queue-item__icon--ghost" />
                               )}
-                              {isWaitingIssue ? (
+                              {isActionableQueueIssue ? (
                                 <button
                                   aria-label="Edit queue item"
                                   className="queue-item__icon"
@@ -2654,7 +2860,7 @@ export function RoomView({
                                   <EditIcon />
                                 </button>
                               ) : null}
-                              {isWaitingIssue ? (
+                              {isActionableQueueIssue ? (
                                 <button
                                   aria-label="Delete queue item"
                                   className="queue-item__icon queue-item__icon--danger"
@@ -2977,35 +3183,35 @@ export function RoomView({
       {closePokerConfirmOpen ? (
         <div className="modal-overlay modal-overlay--confirm" onClick={() => setClosePokerConfirmOpen(false)} role="presentation">
           <div className="card admin-modal admin-modal--confirm" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true">
-            <h2>Close Poker</h2>
+            <h2>Close Room</h2>
             <p>
-              Are you sure you want to close poker for the current issue? This will finish the current voting round.
+              Are you sure you want to close this room? No further issues can be queued or voted on afterwards.
             </p>
             <div className="admin-modal-actions">
               <button className="button-center" onClick={() => setClosePokerConfirmOpen(false)} type="button">
                 Cancel
               </button>
               <button className="button-center" onClick={() => void confirmClosePoker()} type="button">
-                Close poker
+                Close room
               </button>
             </div>
           </div>
         </div>
       ) : null}
 
-      {cancelIssueConfirmOpen ? (
-        <div className="modal-overlay modal-overlay--confirm" onClick={() => setCancelIssueConfirmOpen(false)} role="presentation">
+      {skipIssueConfirmOpen ? (
+        <div className="modal-overlay modal-overlay--confirm" onClick={() => setSkipIssueConfirmOpen(false)} role="presentation">
           <div className="card admin-modal admin-modal--confirm" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true">
-            <h2>Return issue to queue</h2>
+            <h2>Skip issue</h2>
             <p>
-              This will cancel the current voting session and return the issue to the top of the queue. Any votes cast will be discarded.
+              This will cancel the current voting session and move the issue to Skipped. Any votes cast will be discarded.
             </p>
             <div className="admin-modal-actions">
-              <button className="button-center" onClick={() => setCancelIssueConfirmOpen(false)} type="button">
+              <button className="button-center" onClick={() => setSkipIssueConfirmOpen(false)} type="button">
                 Keep voting
               </button>
-              <button className="button-center" onClick={() => void confirmCancelIssue()} type="button">
-                Return to queue
+              <button className="button-center" onClick={() => void confirmSkipIssue()} type="button">
+                Skip issue
               </button>
             </div>
           </div>
@@ -3440,6 +3646,9 @@ function timelineTitle(event: IssueEvent) {
   if (event.type === "leave") {
     return `${shortName(event.participantName ?? event.participantId)} left`;
   }
+  if (event.type === "skip") {
+    return `${shortName(event.participantName ?? event.participantId)} skipped`;
+  }
   return "Event";
 }
 
@@ -3604,7 +3813,9 @@ function formatQueueSource(source: string) {
 }
 
 function formatQueueListState(state: QueueDisplayItem["listState"]) {
-  return state === "completed" ? "Completed" : "Waiting";
+  if (state === "completed") return "Completed";
+  if (state === "skipped") return "Skipped";
+  return "Waiting";
 }
 
 function formatQueuePrimaryLine(item: Pick<QueueDisplayItem, "title" | "externalIssueKey">) {
@@ -3686,35 +3897,8 @@ function measureListCapacity(element: HTMLElement, itemSelector: string): number
   return Math.max(1, Math.floor((usableHeight + gap) / (itemHeight + gap)));
 }
 
-function buildQueueDisplayItems(snapshot: RoomSnapshot, filterValue: QueueFilterValue, sortValue: QueueSortValue) {
-  const waitingItems: QueueDisplayItem[] = snapshot.room.issueQueue.map((issue) => ({
-    id: issue.id,
-    title: issue.title,
-    source: issue.source,
-    externalIssueUrl: issue.externalIssueUrl,
-    externalIssueKey: issue.externalIssueKey,
-    jiraFieldsSnapshot: issue.jiraFieldsSnapshot,
-    listState: "waiting",
-    waitingIssueId: issue.id,
-  }));
-  const completedItems: QueueDisplayItem[] = historyIssues(snapshot).map((issue) => ({
-    id: issue.id,
-    title: issue.title,
-    source: issue.externalSource === "jira" ? "jira" : issue.externalSource || "manual",
-    externalIssueUrl: issue.externalIssueUrl,
-    externalIssueKey: issue.externalIssueKey,
-    jiraFieldsSnapshot: issue.jiraFieldsSnapshot,
-    listState: "completed",
-  }));
-
-  const selectedItems =
-    filterValue === "waiting"
-      ? waitingItems
-      : filterValue === "completed"
-        ? completedItems
-        : [...waitingItems, ...completedItems];
-
-  return [...selectedItems].sort((left, right) => {
+function sortQueueDisplayItems(items: QueueDisplayItem[], sortValue: QueueSortValue) {
+  return [...items].sort((left, right) => {
     if (sortValue === "priority") {
       const weightDifference = queuePriorityWeight(left) - queuePriorityWeight(right);
       if (weightDifference !== 0) {
@@ -3737,6 +3921,52 @@ function buildQueueDisplayItems(snapshot: RoomSnapshot, filterValue: QueueFilter
 
     return left.title.localeCompare(right.title);
   });
+}
+
+function buildQueueDisplayItems(snapshot: RoomSnapshot, filterValue: Set<QueueStatusFilter>, sortValue: QueueSortValue) {
+  const waitingItems: QueueDisplayItem[] = snapshot.room.issueQueue
+    .filter((issue) => issue.status !== "skipped")
+    .map((issue) => ({
+      id: issue.id,
+      title: issue.title,
+      source: issue.source,
+      externalIssueUrl: issue.externalIssueUrl,
+      externalIssueKey: issue.externalIssueKey,
+      jiraFieldsSnapshot: issue.jiraFieldsSnapshot,
+      listState: "waiting",
+      waitingIssueId: issue.id,
+    }));
+  const skippedItems: QueueDisplayItem[] = snapshot.room.issueQueue
+    .filter((issue) => issue.status === "skipped")
+    .map((issue) => ({
+      id: issue.id,
+      title: issue.title,
+      source: issue.source,
+      externalIssueUrl: issue.externalIssueUrl,
+      externalIssueKey: issue.externalIssueKey,
+      jiraFieldsSnapshot: issue.jiraFieldsSnapshot,
+      listState: "skipped",
+      waitingIssueId: issue.id,
+    }));
+  const completedItems: QueueDisplayItem[] = historyIssues(snapshot).map((issue) => ({
+    id: issue.id,
+    title: issue.title,
+    source: issue.externalSource === "jira" ? "jira" : issue.externalSource || "manual",
+    externalIssueUrl: issue.externalIssueUrl,
+    externalIssueKey: issue.externalIssueKey,
+    jiraFieldsSnapshot: issue.jiraFieldsSnapshot,
+    listState: "completed",
+  }));
+
+  const sortedWaiting = filterValue.has("waiting") ? sortQueueDisplayItems(waitingItems, sortValue) : [];
+  const sortedSkipped = filterValue.has("skipped") ? sortQueueDisplayItems(skippedItems, sortValue) : [];
+  const sortedCompleted = filterValue.has("completed") ? sortQueueDisplayItems(completedItems, sortValue) : [];
+
+  if (sortedWaiting.length > 0 && sortedSkipped.length > 0) {
+    sortedSkipped[0] = { ...sortedSkipped[0], groupDividerBefore: true };
+  }
+
+  return [...sortedWaiting, ...sortedSkipped, ...sortedCompleted];
 }
 
 function formatJiraNumber(value: number | null | undefined) {

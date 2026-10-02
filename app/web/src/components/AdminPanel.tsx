@@ -154,7 +154,7 @@ function translatePermission(permissionName: string) {
     reveal_votes: "Reveal Votes",
     view_votes_of_others: "View Votes of Others",
     view_history: "View History",
-    close_poker: "End Round",
+    close_poker: "Close Room",
     queue_issues: "Manage Issue Queue",
     jira_import_issues: "Import Jira Issues",
     jira_send: "Send to Jira",
@@ -171,11 +171,11 @@ function getPermissionCategory(permissionName: string): string {
     view_history: "Poker Voting",
     queue_issues: "Poker Voting",
     reveal_votes: "Poker Voting",
-    close_poker: "Poker Voting",
     create_room: "Room Management",
     delete_room: "Room Management",
     rename_room: "Room Management",
     highlight_cards: "Room Management",
+    close_poker: "Room Management",
     manage_users: "System Administration",
     manage_roles: "System Administration",
     manage_settings: "System Administration",
@@ -249,12 +249,12 @@ function getPermissionOrder(permissionName: string): number {
     view_history: 2,
     queue_issues: 3,
     reveal_votes: 4,
-    close_poker: 5,
     create_room: 10,
     delete_room: 11,
     highlight_cards: 12,
-    jira_import_issues: 13,
-    jira_send: 14,
+    close_poker: 13,
+    jira_import_issues: 14,
+    jira_send: 15,
     worklog_view: 16,
     manage_settings: 20,
     manage_users: 21,
@@ -2724,6 +2724,7 @@ export function AdminPanel({
                         labelsLoading={jiraAdminLabelsLoading}
                         labelsError={jiraAdminLabelsError}
                         onRequestLabels={() => void loadJiraAdminLabels()}
+                        allowEmptyRoot
                       />
                     </div>
                     </div>

@@ -840,6 +840,24 @@ html[data-theme="sprinto"] .auth-provider-button__icon span:nth-child(3) {
   gap: 0.5rem;
 }
 
+.dashboard-rooms__filters button.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.dashboard-rooms__filter-icon {
+  width: 14px;
+  height: 14px;
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.dashboard-rooms__filter-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
 .filter-row {
   display: flex;
   gap: 0.45rem;
@@ -871,7 +889,7 @@ html[data-theme="sprinto"] .auth-provider-button__icon span:nth-child(3) {
   flex-direction: column;
   gap: 0.35rem;
   padding: 0.6rem;
-  background: var(--card-bg, #1e1810);
+  background: #0e2018;
   border: 1px solid rgba(249, 243, 223, 0.12);
   border-radius: 10px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
@@ -1296,6 +1314,26 @@ button:disabled {
 
 .issue-banner__icon {
   margin-left: 0.5rem;
+}
+
+.issue-banner__jira-warning {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  width: fit-content;
+  margin-top: 0.15rem;
+  padding: 0.15rem 0.45rem;
+  border-radius: 8px;
+  font-size: 0.68rem;
+  line-height: 1.2;
+  background: rgba(196, 59, 49, 0.18);
+  color: #ffd5cc;
+  cursor: default;
+}
+
+html[data-theme="glow"] .issue-banner__jira-warning {
+  background: rgba(196, 59, 49, 0.14);
+  color: #7a2a20;
 }
 
 .issue-strip {
@@ -1889,6 +1927,16 @@ button:disabled {
   font-size: 0.76rem;
 }
 
+.controls-inline__divider {
+  height: 1px;
+  background: rgba(249, 243, 223, 0.32);
+  margin: 0.55rem 0;
+}
+
+html[data-theme="glow"] .controls-inline__divider {
+  background: rgba(189, 157, 113, 0.45);
+}
+
 .queue-panel {
   display: flex;
   flex-direction: column;
@@ -1943,51 +1991,44 @@ button:disabled {
   flex-wrap: nowrap;
 }
 
-.queue-toolbar__control {
-  min-width: 0;
+/* `.stack-form button` (the "Add manually" primary-CTA style) outranks a bare `.filter-chip`
+   on specificity, since the queue toolbar lives inside a `.stack-form`. Qualify with the
+   ancestor class to restore the plain chip shape/typography these share with the Dashboard
+   filters, for both active and inactive chips. `background` is deliberately left out of this
+   rule and only set for `:not(.is-active)` below — an unconditional `background` here would,
+   once qualified with the `button` element type, outrank `.filter-chip.is-active` itself
+   (same two classes, but this rule also matches on the element), permanently hiding which
+   chips are selected. Scoping to `:not(.is-active)` sidesteps that: it simply never matches
+   an active chip, so `.filter-chip.is-active`'s own background always applies instead. */
+.queue-toolbar button.filter-chip {
   display: inline-flex;
   align-items: center;
-  flex: 0 1 132px;
-  gap: 0.28rem;
-  padding: 0.2rem 0.42rem;
+  gap: 0.35rem;
   border-radius: 999px;
-  background: rgba(249, 243, 223, 0.08);
-  border: 1px solid rgba(249, 243, 223, 0.08);
-  max-width: 100%;
+  padding: 0.35rem 0.65rem;
+  color: inherit;
+  font-weight: 400;
+  box-shadow: none;
 }
 
-.queue-toolbar__icon {
+.queue-toolbar__chip-icon {
   width: 14px;
   height: 14px;
   display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: rgba(249, 243, 223, 0.72);
+  flex: 0 0 auto;
 }
 
-.queue-toolbar__icon svg {
-  width: 12px;
-  height: 12px;
+.queue-toolbar__chip-icon svg {
+  width: 100%;
+  height: 100%;
 }
 
-.queue-toolbar__control select {
-  min-width: 0;
-  flex: 1 1 auto;
-  max-width: 112px;
-  min-height: 30px;
-  padding: 0.18rem 1.35rem 0.18rem 0.1rem;
-  border: 0;
-  background: transparent;
-  background-color: transparent;
-  color: inherit;
-  font-size: 0.78rem;
-  box-shadow: none;
-  color-scheme: light;
+.queue-toolbar button.filter-chip:not(.is-active) {
+  background: rgba(249, 243, 223, 0.06);
 }
 
-.queue-toolbar__control select option {
-  color: #223228;
-  background: #f8f2e7;
+.queue-toolbar button.filter-chip:not(.is-active):hover:not(:disabled) {
+  background: rgba(249, 243, 223, 0.06);
 }
 
 .queue-divider {
@@ -2015,6 +2056,7 @@ button:disabled {
 }
 
 .queue-jira-panel {
+  position: relative;
   flex: 1 1 auto;
   display: flex;
   flex-direction: column;
@@ -2025,6 +2067,96 @@ button:disabled {
   animation: queue-panel-slide-in 460ms cubic-bezier(0.16, 1, 0.3, 1);
   transform-origin: left center;
   will-change: transform, opacity, filter;
+}
+
+.jira-send-failure-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3rem;
+  padding: 1.5rem;
+  text-align: center;
+  border-radius: 16px;
+  border: 1px solid rgba(249, 243, 223, 0.1);
+  background: rgba(10, 26, 22, 0.98);
+  animation: jira-send-failure-fade-in 0.15s ease-out;
+}
+
+.jira-send-failure-overlay__message strong {
+  display: block;
+  font-size: 0.95rem;
+  margin-bottom: 0.3rem;
+  color: #f9f3df;
+}
+
+.jira-send-failure-overlay__message p {
+  margin: 0;
+  max-width: 320px;
+  font-size: 0.82rem;
+  line-height: 1.4;
+  color: #ff6b6b;
+}
+
+.jira-send-failure-overlay__bar {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  overflow: hidden;
+  background: rgba(249, 243, 223, 0.12);
+  border-radius: 0 0 16px 16px;
+}
+
+.jira-send-failure-overlay__bar-fill {
+  height: 100%;
+  width: 100%;
+  background: #ff6b6b;
+  transform-origin: left center;
+  animation: jira-send-failure-countdown 5s linear forwards;
+}
+
+@keyframes jira-send-failure-countdown {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
+
+@keyframes jira-send-failure-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+html[data-theme="glow"] .jira-send-failure-overlay {
+  background: rgba(255, 250, 244, 0.98);
+  border-color: rgba(112, 94, 76, 0.12);
+}
+
+html[data-theme="glow"] .jira-send-failure-overlay__message strong {
+  color: #223228;
+}
+
+html[data-theme="glow"] .jira-send-failure-overlay__message p {
+  color: #c45454;
+}
+
+html[data-theme="glow"] .jira-send-failure-overlay__bar {
+  background: rgba(34, 50, 40, 0.1);
+}
+
+html[data-theme="glow"] .jira-send-failure-overlay__bar-fill {
+  background: #c45454;
 }
 
 .queue-panel__default-content {
@@ -2239,6 +2371,26 @@ button:disabled {
   overflow-y: auto;
 }
 
+.jira-search-panel__selection {
+  display: flex;
+}
+
+.jira-search-panel__selection-toggle {
+  width: fit-content;
+  padding: 0.3rem 0.7rem;
+  border-radius: 999px;
+  border: 1px solid rgba(249, 243, 223, 0.18);
+  background: rgba(249, 243, 223, 0.08);
+  color: inherit;
+  font-size: 0.74rem;
+  cursor: pointer;
+}
+
+.jira-search-panel__selection-toggle.is-active {
+  background: rgba(233, 196, 106, 0.22);
+  border-color: rgba(233, 196, 106, 0.55);
+}
+
 .jira-search-result {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
@@ -2385,6 +2537,24 @@ button:disabled {
 .queue-item--placeholder {
   visibility: hidden;
   pointer-events: none;
+}
+
+.queue-item--group-divider {
+  position: relative;
+  margin-top: 1.6rem;
+  border-top: 1px solid rgba(249, 243, 223, 0.2);
+}
+
+.queue-item--group-divider::before {
+  content: "Skipped";
+  position: absolute;
+  top: -1.3rem;
+  left: 0.1rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: rgba(249, 243, 223, 0.55);
 }
 
 .queue-item--locked .queue-item__select,
@@ -3211,6 +3381,12 @@ button:disabled {
   align-items: center;
   gap: 0.4rem;
   flex-wrap: wrap;
+}
+
+.jira-filter-empty {
+  margin: 0 0 0.6rem;
+  font-size: 0.78rem;
+  color: rgba(249, 243, 223, 0.55);
 }
 
 .jira-filter-group {
@@ -8175,10 +8351,6 @@ select:disabled {
     justify-content: stretch;
   }
 
-  .queue-toolbar__control {
-    width: 100%;
-  }
-
   .queue-item {
     align-items: flex-start;
     padding: 0.45rem 0.5rem;
@@ -8259,15 +8431,6 @@ select:disabled {
     gap: 0.3rem;
   }
 
-  .queue-toolbar__control {
-    min-width: 0;
-    padding-inline: 0.34rem;
-  }
-
-  .queue-toolbar__control select {
-    max-width: none;
-    font-size: 0.76rem;
-  }
 }
 
 @media (max-width: 820px) {
@@ -9224,6 +9387,10 @@ html[data-theme="glow"] .jira-filter-summary {
   color: rgba(34, 50, 40, 0.55);
 }
 
+html[data-theme="glow"] .jira-filter-empty {
+  color: rgba(34, 50, 40, 0.55);
+}
+
 html[data-theme="glow"] .jira-filter-summary code {
   color: rgba(34, 50, 40, 0.8);
 }
@@ -9366,24 +9533,6 @@ html[data-theme="glow"] .jira-action-modal__assignee-group-divider {
   background: rgba(86, 92, 84, 0.15);
 }
 
-html[data-theme="glow"] .queue-toolbar__control {
-  background: rgba(255, 247, 239, 0.92);
-  border: 1px solid rgba(112, 94, 76, 0.12);
-}
-
-html[data-theme="glow"] .queue-toolbar__icon {
-  color: rgba(86, 92, 84, 0.86);
-}
-
-html[data-theme="glow"] .queue-toolbar__control select {
-  color: #223228;
-}
-
-html[data-theme="glow"] .queue-toolbar__control select option {
-  color: #223228;
-  background: #fff8ef;
-}
-
 html[data-theme="glow"] .queue-item__meta span {
   color: rgba(86, 92, 84, 0.78);
 }
@@ -9395,6 +9544,14 @@ html[data-theme="glow"] .queue-item__meta span:not(:first-child) {
 html[data-theme="glow"] .queue-item__source-tag {
   color: rgba(86, 92, 84, 0.82);
   border-left-color: rgba(112, 94, 76, 0.5);
+}
+
+html[data-theme="glow"] .queue-item--group-divider {
+  border-top-color: rgba(112, 94, 76, 0.3);
+}
+
+html[data-theme="glow"] .queue-item--group-divider::before {
+  color: rgba(86, 92, 84, 0.68);
 }
 
 html[data-theme="glow"] .button-small--ghost {
@@ -9421,6 +9578,17 @@ html[data-theme="glow"] .jira-search-result__meta {
 
 html[data-theme="glow"] .jira-search-panel__error {
   color: #c45454;
+}
+
+html[data-theme="glow"] .jira-search-panel__selection-toggle {
+  background: rgba(255, 247, 239, 0.86);
+  border-color: rgba(112, 94, 76, 0.18);
+  color: #223228;
+}
+
+html[data-theme="glow"] .jira-search-panel__selection-toggle.is-active {
+  background: rgba(233, 196, 106, 0.3);
+  border-color: rgba(233, 196, 106, 0.6);
 }
 
 html[data-theme="glow"] .queue-option-item {
