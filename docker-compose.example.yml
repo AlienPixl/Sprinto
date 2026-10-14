@@ -34,9 +34,11 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: sprinto-app
-    # Keep the app stopped on configuration/bootstrap failures so the logs stay
-    # readable and administrators can fix the underlying issue without a restart loop.
-    restart: "no"
+    # Bring the app back after a crash or a host/Docker restart. A configuration
+    # or bootstrap error still exits with a clear message, but Docker keeps
+    # retrying until it is fixed — check `docker compose logs app`, correct .env,
+    # then `docker compose up -d`. `docker compose stop app` halts the retries.
+    restart: unless-stopped
     environment:
       # -----------------------------------------------------------------------
       # Basic runtime
